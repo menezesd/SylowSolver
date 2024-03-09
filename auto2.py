@@ -6,7 +6,9 @@ import sylow2
 class Fact:
 
     # depth is the number of nested cases in which the fact has been shown
-    def __init__(self, name, args, dependencies=[], label=None, dis_ancestors=[]):
+    def __init__(self, name, args, dependencies=None, label=None, dis_ancestors=None):
+        dependencies = [] if dependencies is None else dependencies
+        dis_ancestors = [] if dis_ancestors is None else dis_ancestors
         self.name = name
         self.args = args
         self.dependencies = (
@@ -75,7 +77,9 @@ class Fact:
 # an OR of facts
 class Disjunction:
 
-    def __init__(self, facts, dependencies=[], label=None, dis_ancestors=[]):
+    def __init__(self, facts, dependencies=None, label=None, dis_ancestors=None):
+        dependencies = [] if dependencies is None else dependencies
+        dis_ancestors = [] if dis_ancestors is None else dis_ancestors
         self.facts = facts
         self.dependencies = dependencies
         self.dis_ancestors = set()
@@ -666,7 +670,8 @@ def match_facts_to_theorem(thm_facts, facts, new_facts=None):
 # also returns the associated matching dict
 # optional argument init_match_dict gives literals corresponding to a subset of arguments in template
 # not necessarily as efficient as possible
-def match_facts_to_template(template, facts, init_match_dict={}):
+def match_facts_to_template(template, facts, init_match_dict=None):
+    init_match_dict = {} if init_match_dict is None else init_match_dict
     matches = []
     dicts = []
     template_name = template.name
