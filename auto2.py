@@ -410,9 +410,8 @@ class Proof_environment:
         for fact in simple_fact_list:
             args = fact.args
             for i in range(0, len(args)):
-                sym = args[i]
 
-                if sym is None:
+                if (sym := args[i]) is None:
                     print("error")
                     fact.do_print()
                     self.exec_command("display")
@@ -735,14 +734,11 @@ def auto_solve(pf_envir):
                 #                print("   about to apply ", thm.name)
                 #               for f in match:
                 #                   f.do_print()
-                facts_from_theorem = pf_envir.apply_thm(thm, match)
                 #                print("   applied")
 
                 #              if(len(facts_from_theorem) > 0): encountered_match = True
 
-                if (
-                    facts_from_theorem
-                ):  # sometimes the theorem match might be invalid. FIX?
+                if facts_from_theorem := pf_envir.apply_thm(thm, match):  # sometimes the theorem match might be invalid. FIX?
                     # FIX move encountered_match here
                     new_facts += facts_from_theorem
 
@@ -1093,8 +1089,7 @@ def rule(facts):
     p = int(facts[0].args[1])
     P = facts[0].args[0]
     n_p = int(facts[1].args[2])
-    pk = int(facts[2].args[1])
-    if pk == p:  # P is cylic of prime order
+    if (pk := int(facts[2].args[1])) == p:  # P is cylic of prime order
         lower_bound = (p - 1) * n_p
     else:  # not cyclic of prime order
         if n_p == 1:
@@ -1597,8 +1592,7 @@ def find_hard_orders(in_file):
         for n in f:
             facts = [group("G"), simple("G"), order("G", n)]
             pf_envir = Proof_environment(facts, thm_list, thm_names, false())
-            success = auto_solve(pf_envir)
-            if success:
+            if success := auto_solve(pf_envir):
                 print(n, " : SUCCESS")
             else:
                 print(n, " : FAILURE")
