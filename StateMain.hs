@@ -119,6 +119,9 @@ main = do
           , ruleOutMaxIntersections
           , ruleOutNormalizerOfIntersectionOrder
           , embeddingContradiction
+          , transitiveActionTheorem
+          , enhancedSubgroupIndex
+          , multipleCountingContradiction
           ]
   
   env <- createProofEnvironment initialFacts theorems goalFact

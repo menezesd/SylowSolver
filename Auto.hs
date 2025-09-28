@@ -32,9 +32,6 @@ module Auto
   , properSubgroup
   , normal
   , normalizerOfSylowIntersection
-  , orFact
-  
-    , normalizerOfSylowIntersection
   , subgroupIndex
   , groupEmbeds
   , orFact
@@ -66,7 +63,11 @@ module Auto
   , normalSubgroupToNotSimple
   , ruleOutMaxIntersections
   , ruleOutNormalizerOfIntersectionOrder
-  , embeddingContradiction  ) where
+  , embeddingContradiction
+  , transitiveActionTheorem
+  , enhancedSubgroupIndex
+  , multipleCountingContradiction
+  ) where
 
 import Core
 import qualified NumberTheory as NT
@@ -176,6 +177,8 @@ subgroupIndex h g n = createFact "subgroup_index" [h, g, n]
 -- | Group embedding: groupEmbeds(G, H) means G embeds in H
 groupEmbeds :: String -> String -> Fact
 groupEmbeds g h = createFact "group_embeds" [g, h]
+
+
 
 -- | Create a disjunction (OR) of two facts
 orFact :: Fact -> Fact -> Disjunction
@@ -698,3 +701,76 @@ embeddingContradiction = createHyperTheorem inputFacts rule "embedding_contradic
                 _ -> []
             _ -> []
         _ -> []
+
+-- | Transitive action theorem: if H has index n in G, then G acts transitively on n elements
+transitiveActionTheorem :: HyperTheorem
+transitiveActionTheorem = createHyperTheorem inputFacts rule "transitive_action_theorem"
+  where
+    inputFacts = [index "G" "H" "n"]
+    
+    rule facts =
+      case facts of
+        (idx:_) ->
+          case factArgs idx of
+            [gName, _hName, nStr] -> [CF (transitiveAction gName nStr)]
+            _ -> []
+        _ -> []
+
+-- | Enhanced subgroup index calculation with better logic
+enhancedSubgroupIndex :: HyperTheorem
+enhancedSubgroupIndex = createHyperTheorem inputFacts rule "enhanced_subgroup_index"
+  where
+    inputFacts = [subgroup "H" "G", order "H" "m", order "G" "n"]
+
+    rule facts =
+      case facts of
+        (sub:ordH:ordG:_) ->
+          case factArgs sub of
+            [hName, gName] ->
+              case factArgs ordH of
+                [_h2, mStr] ->
+                  case factArgs ordG of
+                    [_g2, nStr] ->
+                      case (readMaybe mStr :: Maybe Int, readMaybe nStr :: Maybe Int) of
+                        (Just m, Just n) | n `mod` m == 0 ->
+                          let idx = n `div` m
+                          in [ CF (index gName hName (show idx))
+                             , CF (transitiveAction gName (show idx))
+                             ]
+                        _ -> []
+                    _ -> []
+                _ -> []
+            _ -> []
+        _ -> []
+
+-- | Enhanced counting contradiction for multiple primes
+multipleCountingContradiction :: HyperTheorem
+multipleCountingContradiction = createHyperTheorem inputFacts rule "multiple_counting_contradiction"
+  where
+    inputFacts = [ orderLowerBound "G" "N1"
+                 , orderLowerBound "G" "N2"
+                 , order "G" "n"
+                 ]
+
+    rule facts =
+      case facts of
+        (olb1:olb2:ordG:_) ->
+          case factArgs olb1 of
+            [_g1, n1Str] ->
+              case factArgs olb2 of
+                [_g2, n2Str] ->
+                  case factArgs ordG of
+                    [_g3, nStr] ->
+                      case ( readMaybe n1Str :: Maybe Int
+                           , readMaybe n2Str :: Maybe Int
+                           , readMaybe nStr :: Maybe Int) of
+                        (Just n1, Just n2, Just n)
+                          | n1 + n2 + 1 > n -> [CF false]
+                          | otherwise -> []
+                        _ -> []
+                    _ -> []
+                _ -> []
+            _ -> []
+        _ -> []
+
+-- | Transitive action theorem: if H has index n in G, then G acts transitively on n elements\ntransitiveActionTheorem :: HyperTheorem\ntransitiveActionTheorem = createHyperTheorem inputFacts rule \"transitive_action_theorem\"\n  where\n    inputFacts = [index \"G\" \"H\" \"n\"]\n    \n    rule facts =\n      case facts of\n        (idx:_) ->\n          case factArgs idx of\n            [gName, _hName, nStr] -> [CF (transitiveAction gName nStr)]\n            _ -> []\n        _ -> []\n\n-- | Enhanced subgroup index calculation with better logic\nenhancedSubgroupIndex :: HyperTheorem\nenhancedSubgroupIndex = createHyperTheorem inputFacts rule \"enhanced_subgroup_index\"\n  where\n    inputFacts = [subgroup \"H\" \"G\", order \"H\" \"m\", order \"G\" \"n\"]\n\n    rule facts =\n      case facts of\n        (sub:ordH:ordG:_) ->\n          case factArgs sub of\n            [hName, gName] ->\n              case factArgs ordH of\n                [_h2, mStr] ->\n                  case factArgs ordG of\n                    [_g2, nStr] ->\n                      case (readMaybe mStr :: Maybe Int, readMaybe nStr :: Maybe Int) of\n                        (Just m, Just n) | n `mod` m == 0 ->\n                          let idx = n `div` m\n                          in [ CF (index gName hName (show idx))\n                             , CF (transitiveAction gName (show idx))\n                             ]\n                        _ -> []\n                    _ -> []\n                _ -> []\n            _ -> []\n        _ -> []\n\n-- | Enhanced counting contradiction for multiple primes\nmultipleCountingContradiction :: HyperTheorem\nmultipleCountingContradiction = createHyperTheorem inputFacts rule \"multiple_counting_contradiction\"\n  where\n    inputFacts = [ orderLowerBound \"G\" \"p1\" \"N1\"\n                 , orderLowerBound \"G\" \"p2\" \"N2\"\n                 , order \"G\" \"n\"\n                 ]\n\n    rule facts =\n      case facts of\n        (olb1:olb2:ordG:_) ->\n          case factArgs olb1 of\n            [_g1, p1Str, n1Str] ->\n              case factArgs olb2 of\n                [_g2, p2Str, n2Str] ->\n                  case factArgs ordG of\n                    [_g3, nStr] ->\n                      case ( readMaybe p1Str :: Maybe Int\n                           , readMaybe p2Str :: Maybe Int\n                           , readMaybe n1Str :: Maybe Int\n                           , readMaybe n2Str :: Maybe Int\n                           , readMaybe nStr :: Maybe Int) of\n                        (Just p1, Just p2, Just n1, Just n2, Just n)\n                          | p1 /= p2 && n1 + n2 + 1 > n -> [CF false]\n                          | otherwise -> []\n                        _ -> []\n                    _ -> []\n                _ -> []\n            _ -> []\n        _ -> []
