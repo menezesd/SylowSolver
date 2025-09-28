@@ -1,0 +1,60 @@
+cabal-version: 2.4
+name: sylow-solver
+version: 0.1.0.0
+synopsis: Haskell port of the SylowSolver theorem prover
+description: 
+    A lightweight theorem-proving engine for group theory, specifically
+    designed to solve problems related to Sylow subgroups. This is a 
+    Haskell port of the original Python implementation.
+    
+homepage: https://github.com/menezesd/SylowSolver
+category: Math, Logic, Theorem Proving
+build-type: Simple
+extra-source-files: README.md
+
+library
+    exposed-modules: 
+        NumberTheory,
+        Core,
+        StateEnvironment,
+        Auto
+        
+    build-depends: 
+        base >= 4.12 && < 5,
+        containers >= 0.6 && < 0.8,
+        mtl >= 2.2 && < 2.4
+        
+    hs-source-dirs: .
+    default-language: Haskell2010
+    ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+
+executable sylow-solver
+    main-is: StateMain.hs
+    build-depends:
+        base >= 4.12 && < 5,
+        sylow-solver,
+        containers >= 0.6 && < 0.8,
+        mtl >= 2.2 && < 2.4
+        
+    hs-source-dirs: .
+    default-language: Haskell2010
+    ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+
+test-suite sylow-solver-test
+    type: exitcode-stdio-1.0
+    main-is: Spec.hs
+    other-modules:
+        NumberTheorySpec,
+        CoreSpec,
+        AutoSpec
+        
+    build-depends:
+        base >= 4.12 && < 5,
+        sylow-solver,
+        hspec >= 2.7 && < 2.11,
+        QuickCheck >= 2.14 && < 2.15,
+        containers >= 0.6 && < 0.8
+        
+    hs-source-dirs: test
+    default-language: Haskell2010
+    ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
