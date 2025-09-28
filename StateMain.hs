@@ -105,6 +105,9 @@ main = do
                    , singleSylowNotSimple
                    , pGroupNotSimple     -- SAFE
                    -- , simpleNotSimple    -- This is a Theorem, not HyperTheorem
+                   , dividesContradiction -- CRITICAL - needed for divisibility proofs
+                   , countOrderPkElements -- CRITICAL - needed for element counting  
+                   , countingContradiction -- CRITICAL - needed for counting contradictions
                    , embedInAn          -- SAFE
                    , alternatingOrder   -- SAFE
                    , alternatingSimple  -- SAFE
