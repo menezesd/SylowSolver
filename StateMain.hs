@@ -118,6 +118,7 @@ main = do
           , normalSubgroupToNotSimple
           , ruleOutMaxIntersections
           , ruleOutNormalizerOfIntersectionOrder
+          , embeddingContradiction
           ]
   
   env <- createProofEnvironment initialFacts theorems goalFact

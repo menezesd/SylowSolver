@@ -34,6 +34,11 @@ module Auto
   , normalizerOfSylowIntersection
   , orFact
   
+    , normalizerOfSylowIntersection
+  , subgroupIndex
+  , groupEmbeds
+  , orFact
+  
   -- * Pattern matching and theorem application
   , MatchDict
   , matchFactsToTemplate
@@ -61,7 +66,7 @@ module Auto
   , normalSubgroupToNotSimple
   , ruleOutMaxIntersections
   , ruleOutNormalizerOfIntersectionOrder
-  ) where
+  , embeddingContradiction  ) where
 
 import Core
 import qualified NumberTheory as NT
@@ -163,6 +168,14 @@ normal h g = createFact "normal" [h, g]
 -- | T is the normalizer of intersection for two sylow-p subgroups of G
 normalizerOfSylowIntersection :: String -> String -> String -> Fact
 normalizerOfSylowIntersection p g t = createFact "normalizer_of_sylow_intersection" [p, g, t]
+
+-- | Subgroup index: subgroupIndex(H, G, n) means H has index n in G
+subgroupIndex :: String -> String -> String -> Fact
+subgroupIndex h g n = createFact "subgroup_index" [h, g, n]
+
+-- | Group embedding: groupEmbeds(G, H) means G embeds in H
+groupEmbeds :: String -> String -> Fact
+groupEmbeds g h = createFact "group_embeds" [g, h]
 
 -- | Create a disjunction (OR) of two facts
 orFact :: Fact -> Fact -> Disjunction
@@ -653,6 +666,34 @@ ruleOutNormalizerOfIntersectionOrder = createHyperTheorem inputFacts rule "rule_
                 [_t2, kStr] ->
                   case (readMaybe pStr :: Maybe Int, readMaybe kStr :: Maybe Int) of
                     (Just p, Just k) -> let nps = NT.numSylow p k in if length nps == 1 then [CF false] else []
+                    _ -> []
+                _ -> []
+            _ -> []
+        _ -> []
+-- | If G embeds in A_n but |G| doesn't divide |A_n|, we have a contradiction  
+embeddingContradiction :: HyperTheorem
+embeddingContradiction = createHyperTheorem inputFacts rule "embedding_contradiction"
+  where
+    inputFacts = [groupEmbeds "G" "An", order "G" "n"]
+
+    rule facts =
+      case facts of
+        (embed:ordG:_) ->
+          case factArgs embed of
+            [_gName, anStr] ->
+              case factArgs ordG of
+                [_g2, nStr] ->
+                  case readMaybe nStr :: Maybe Int of
+                    Just n -> 
+                      -- Extract alternating group order from A_k format
+                      let anOrder = case anStr of
+                            'A':'_':kStr -> case readMaybe kStr of
+                              Just k | k >= 2 -> Just $ product [1..k] `div` 2
+                              _ -> Nothing
+                            _ -> Nothing
+                      in case anOrder of
+                           Just an | n > an -> [CF false] -- G is too big to embed
+                           _ -> []
                     _ -> []
                 _ -> []
             _ -> []
