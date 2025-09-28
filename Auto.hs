@@ -69,6 +69,7 @@ module Auto
   , simpleGroupActionTheorem
   , enhancedSubgroupIndex
   , multipleCountingContradiction
+  , earlyContradictionDetection
   ) where
 
 import Core
@@ -790,6 +791,26 @@ multipleCountingContradiction = createHyperTheorem inputFacts rule "multiple_cou
                           | otherwise -> []
                         _ -> []
                     _ -> []
+                _ -> []
+            _ -> []
+        _ -> []
+
+-- | Early contradiction detection for impossible embeddings
+earlyContradictionDetection :: HyperTheorem
+earlyContradictionDetection = createHyperTheorem inputFacts rule "early_contradiction"
+  where
+    inputFacts = [subgroup "G" "H", order "G" "n", order "H" "m"]
+    
+    rule facts =
+      case facts of
+        (sub:ordG:ordH:_) ->
+          case (factArgs sub, factArgs ordG, factArgs ordH) of
+            ([gName, hName], [_g2, nStr], [_h2, mStr]) ->
+              case (readMaybe nStr :: Maybe Int, readMaybe mStr :: Maybe Int) of
+                (Just n, Just m) 
+                  | m > n -> [CF false]  -- Subgroup can't be larger than group
+                  | n > 0 && m > 0 && n `mod` m /= 0 -> [CF false]  -- Lagrange violation
+                  | otherwise -> []
                 _ -> []
             _ -> []
         _ -> []

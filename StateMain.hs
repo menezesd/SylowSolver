@@ -119,6 +119,7 @@ main = do
           , ruleOutMaxIntersections
           , ruleOutNormalizerOfIntersectionOrder
           , embeddingContradiction
+          , earlyContradictionDetection
           , cosetActionTheorem
           , simpleGroupActionTheorem
           , enhancedSubgroupIndex
