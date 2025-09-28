@@ -34,6 +34,7 @@ module Auto
   , normalizerOfSylowIntersection
   , subgroupIndex
   , groupEmbeds
+  , alternatingGroup
   , orFact
   
   -- * Pattern matching and theorem application
@@ -64,7 +65,8 @@ module Auto
   , ruleOutMaxIntersections
   , ruleOutNormalizerOfIntersectionOrder
   , embeddingContradiction
-  , transitiveActionTheorem
+  , cosetActionTheorem
+  , simpleGroupActionTheorem
   , enhancedSubgroupIndex
   , multipleCountingContradiction
   ) where
@@ -174,9 +176,11 @@ normalizerOfSylowIntersection p g t = createFact "normalizer_of_sylow_intersecti
 subgroupIndex :: String -> String -> String -> Fact
 subgroupIndex h g n = createFact "subgroup_index" [h, g, n]
 
--- | Group embedding: groupEmbeds(G, H) means G embeds in H
+-- | Group embeds: groupEmbeds(G, H) means G can be embedded in H
 groupEmbeds :: String -> String -> Fact
 groupEmbeds g h = createFact "group_embeds" [g, h]
+
+
 
 
 
@@ -373,8 +377,10 @@ alternatingOrder = createHyperTheorem inputFacts ruleOrder "alternating_order"
             [a, nStr] ->
               case readMaybe nStr :: Maybe Int of
                 Nothing -> []
-                Just n -> let orderVal = if n == 1 then 1 else factorial n `div` 2
-                          in if n > 1000 then [] else [CF (order a (show orderVal))]
+                Just n -> if n <= 0 || n > 1000 
+                         then []
+                         else let orderVal = if n == 1 then 1 else factorial n `div` 2
+                              in [CF (order a (show orderVal))]
             _ -> []
         _ -> []
 
@@ -702,9 +708,9 @@ embeddingContradiction = createHyperTheorem inputFacts rule "embedding_contradic
             _ -> []
         _ -> []
 
--- | Transitive action theorem: if H has index n in G, then G acts transitively on n elements
-transitiveActionTheorem :: HyperTheorem
-transitiveActionTheorem = createHyperTheorem inputFacts rule "transitive_action_theorem"
+-- | Coset action theorem: if H has index n in G, then G acts transitively on n elements  
+cosetActionTheorem :: HyperTheorem
+cosetActionTheorem = createHyperTheorem inputFacts rule "coset_action"
   where
     inputFacts = [index "G" "H" "n"]
     
@@ -713,6 +719,21 @@ transitiveActionTheorem = createHyperTheorem inputFacts rule "transitive_action_
         (idx:_) ->
           case factArgs idx of
             [gName, _hName, nStr] -> [CF (transitiveAction gName nStr)]
+            _ -> []
+        _ -> []
+
+-- | Simple group action theorem: if G is simple and acts transitively on n elements, then G embeds in A_n
+simpleGroupActionTheorem :: HyperTheorem  
+simpleGroupActionTheorem = createHyperTheorem inputFacts rule "simple_group_action"
+  where
+    inputFacts = [transitiveAction "G" "n", simple "G"]
+    
+    rule facts =
+      case facts of
+        (ta:simp:_) ->
+          case (factArgs ta, factArgs simp) of  
+            ([gName, nStr], [g2]) | gName == g2 -> 
+              [CF (subgroup gName ("A" ++ nStr)), CF (alternatingGroup ("A" ++ nStr) nStr)]
             _ -> []
         _ -> []
 
