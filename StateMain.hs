@@ -102,29 +102,27 @@ main = do
     theorems = [ lagrange, simpleNotSimple ]
     initialFacts = [ group g, order g groupOrderStr, simple g ]
     hyperTheorems = [ sylowTheorem
-          , singleSylowNotSimple
-          , pGroupNotSimple
-          , dividesContradiction
-          , countOrderPkElements
-          , countingContradiction
-          , embedInAn
-          , alternatingOrder
-          , alternatingSimple
-          , multipleSylows
-          , possibleMaxIntersections
-          , intersectionOfSylows
-          , normalizerSylowIntersection
-          , normalizerEverythingImpliesNormal
-          , normalSubgroupToNotSimple
-          , ruleOutMaxIntersections
-          , ruleOutNormalizerOfIntersectionOrder
-          , embeddingContradiction
-          , earlyContradictionDetection
-          , cosetActionTheorem
-          , simpleGroupActionTheorem
-          , enhancedSubgroupIndex
-          , multipleCountingContradiction
-          ]
+                   , singleSylowNotSimple
+                   , pGroupNotSimple     -- SAFE
+                   -- , simpleNotSimple    -- This is a Theorem, not HyperTheorem
+                   , embedInAn          -- SAFE
+                   , alternatingOrder   -- SAFE
+                   , alternatingSimple  -- SAFE
+                   , multipleSylows     -- SAFE
+                   , possibleMaxIntersections  -- SAFE
+                   , intersectionOfSylows      -- SAFE
+                   , normalizerSylowIntersection -- TEST THESE
+                   , normalizerEverythingImpliesNormal -- TEST THESE
+                   , normalSubgroupToNotSimple -- TEST THESE
+                   , ruleOutMaxIntersections   -- SAFE
+                   , ruleOutNormalizerOfIntersectionOrder -- SAFE
+                   , embeddingContradiction  -- ENABLE ALL
+                   , earlyContradictionDetection  -- ENABLE ALL
+                   , cosetActionTheorem        -- ENABLE ALL
+                   , simpleGroupActionTheorem  -- ENABLE ALL
+                   , enhancedSubgroupIndex     -- ENABLE ALL
+                   , multipleCountingContradiction -- ENABLE ALL
+                   ]
   
   env <- createProofEnvironment initialFacts theorems goalFact
   
