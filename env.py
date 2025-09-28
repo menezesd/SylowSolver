@@ -1,0 +1,346 @@
+"""Proof environment implementation.
+
+This module provides the ProofEnvironment class which depends on the
+data-model classes defined in `core.py`.
+"""
+
+import itertools
+from core import Fact, Disjunction, Theorem, HyperTheorem
+
+
+class ProofEnvironment:
+    """Proof environment maintaining facts, theorems, and search state."""
+
+    def __init__(self, facts, theorems, theorem_name_dict, goal):
+        self.ordered_fact_list = []
+        self.facts = []
+        self.theorems = theorems
+        self.theorem_name_dict = theorem_name_dict
+        self.disjunctions = []
+
+        self.goal = goal
+        self.goal_achieved = False
+        self.goal_dis_combos = []
+
+        self.fact_labels = {}
+        self.cur_fact_num = 0
+        # initialize attributes used for generating new symbol names
+        # set sensible defaults so generate_new_symbol can always run
+        self.cur_letter = "A"
+        self.cur_suffix = 0
+        self.case_depth = 0
+        self.num_cases = 0
+        self.solved_cases = 0
+        self.case_dis = None
+        self.case_fact = None
+
+        self.add_new_facts(facts)
+        self.symbol_set = set()
+
+        for fact in self.facts:
+            for sym in fact.args:
+                self.symbol_set.add(sym)
+
+    def new_label(self, letter="F"):
+        label = letter + str(self.cur_fact_num)
+        self.cur_fact_num += 1
+        return label
+
+    def update_goal_achieved(self, _goal_fact):
+
+        full_dis_set = set(D for D, i in set.union(*(self.goal_dis_combos)))
+
+        dis_labels = set(D for D in full_dis_set)  # prevent duplicates
+        L = [(D, len(self.fact_labels[D].facts)) for D in dis_labels]
+        X = []
+        for D, l in L:
+            X.append([(D, i) for i in range(0, l)])
+        S = list(itertools.product(*X))
+        S = set(frozenset(u) for u in S)
+
+        frozen_dis_combos = set(frozenset(d) for d in self.goal_dis_combos)
+        for s in S:
+            found_implication = False
+            for dtuple in frozen_dis_combos:
+                if dtuple.issubset(s):
+                    found_implication = True
+                    continue
+            if not found_implication:
+                return
+
+        self.goal_achieved = True
+
+    def update_useful(self, fact):
+        if fact.useful:
+            return
+        fact.useful = True
+        for pred_lbl in fact.dependencies:
+            self.update_useful(self.fact_labels[pred_lbl])
+
+    def add_new_facts(self, new_facts):
+        for fact in new_facts:
+
+            if isinstance(fact, Fact):
+                new_label = self.new_label()
+                self.fact_labels[new_label] = fact
+                fact.label = new_label
+
+                self.facts.append(fact)
+                if fact.equals(self.goal):
+                    self.goal_dis_combos.append(fact.dis_ancestors)
+                    self.update_goal_achieved(fact)
+                    self.update_useful(fact)
+
+            if isinstance(fact, Disjunction):
+                new_label = self.new_label(letter="D")
+                self.fact_labels[new_label] = fact
+                fact.label = new_label
+                self.disjunctions.append(fact)
+
+                for i in range(0, len(fact.facts)):
+                    sub_fact = fact.facts[i]
+                    sub_fact.dependencies = [fact.label]
+                    sub_fact.dis_ancestors = set(fact.dis_ancestors)
+                    sub_fact.dis_ancestors.add((fact.label, i))
+
+                self.add_new_facts(fact.facts)
+
+            self.ordered_fact_list.append(new_label)
+
+    def apply_std_thm(self, thm, facts):
+        valid = True
+        if len(facts) != len(thm.facts):
+            valid = False
+        matching = {}
+        for pair in zip(facts, thm.facts):
+            in_fact = pair[0]
+            thm_fact = pair[1]
+            if in_fact.name != thm_fact.name:
+                valid = False
+            if len(in_fact.args) != len(thm_fact.args):
+                valid = False
+            for arg_pair in zip(in_fact.args, thm_fact.args):
+                in_arg = arg_pair[0]
+                thm_arg = arg_pair[1]
+
+                if thm_arg[0] == "*":
+                    if in_arg != thm_arg[1:]:
+                        print("exact match expected")
+                        valid = False
+                    continue
+
+                if thm_arg in matching:
+                    if matching[thm_arg] != in_arg:
+                        valid = False
+                else:
+                    matching[thm_arg] = in_arg
+
+        if not valid:
+            return False
+
+        conclusions = []
+        for conc in thm.conclusions:
+            new_fact_args = []
+            for x in conc.args:
+                if x[0] != "?":
+                    new_fact_args.append(matching[x])
+                else:
+                    new_fact_args.append(x)
+
+            new_fact = Fact(conc.name, new_fact_args)
+            conclusions.append(new_fact)
+
+        return conclusions
+
+    def apply_thm(self, thm, facts):
+        new_facts = None
+        used_disjunction_facts = set.union(*[f.dis_ancestors for f in facts])
+        used_disjunction_dict = dict(used_disjunction_facts)
+        valid = True
+        for d, i in used_disjunction_facts:
+            if used_disjunction_dict[d] != i:
+                valid = False
+        if not valid:
+            return False
+
+        if isinstance(thm, Theorem):
+            new_facts = self.apply_std_thm(thm, facts)
+        if isinstance(thm, HyperTheorem):
+            new_facts = thm.rule(facts)
+        if new_facts is False:
+            print("error applying theorem")
+            return
+
+        new_dis_ancestors = set.union(*[fact.dis_ancestors for fact in facts])
+        dependency_labels = [fact.label for fact in facts]
+        for new_fact in new_facts:
+            new_fact.dependencies = dependency_labels
+            new_fact.conc_thm = thm
+            new_fact.dis_ancestors = new_dis_ancestors
+
+        self.process_new_facts(new_facts)
+        self.add_new_facts(new_facts)
+
+        for f in list(new_facts):
+            if isinstance(f, Disjunction):
+                new_facts += f.facts
+
+        return new_facts
+
+    def process_new_facts(self, new_facts):
+        sym_dict = {}
+
+        simple_fact_list = []
+        for fact in new_facts:
+            if isinstance(fact, Fact):
+                simple_fact_list.append(fact)
+            elif isinstance(fact, Disjunction):
+                simple_fact_list += fact.facts
+            else:
+                print("not Fact or Disjunction")
+
+        for fact in simple_fact_list:
+            args = fact.args
+            for i in range(0, len(args)):
+
+                if (sym := args[i]) is None:
+                    print("error")
+                    fact.do_print()
+                    self.exec_command("display")
+
+                if sym[0] == "?":
+                    if sym not in sym_dict:
+                        new_symbol = self.generate_new_symbol()
+                        sym_dict[sym] = new_symbol
+                    args[i] = sym_dict[sym]
+
+    def generate_new_symbol(self):
+        try:
+            while True:
+                cur_suffix = self.cur_suffix
+                suffix = ""
+                if cur_suffix != 0:
+                    suffix = str(cur_suffix)
+                new_symbol = self.cur_letter + suffix
+                if self.cur_letter == "Z":
+                    self.cur_letter = "A"
+                    self.cur_suffix += 1
+                else:
+                    self.cur_letter = chr(ord(self.cur_letter) + 1)
+                if new_symbol not in self.symbol_set:
+                    if new_symbol is None:
+                        print("error: returning None")
+                    return new_symbol
+        except AttributeError:
+            self.cur_letter = "A"
+            self.cur_suffix = 0
+            return self.generate_new_symbol()
+
+    def start_cases(self, dis):
+        self.num_cases = len(dis.facts)
+        self.solved_cases = 0
+        self.case_depth += 1
+        self.case_dis = dis
+        self.case_fact = (dis.facts[self.solved_cases]).copy()
+        self.add_new_facts([self.case_fact])
+
+    def case_solved(self):
+        self.solved_cases += 1
+        self.remove_facts_by_depth(self.case_depth)
+        if self.solved_cases == self.num_cases:
+            done = True
+            self.case_depth -= 1
+        else:
+            done = False
+            self.case_fact = ((self.case_dis).facts[self.solved_cases]).copy()
+            self.add_new_facts([self.case_fact])
+        return done
+
+    def remove_facts_by_depth(self, D):
+        fact_labels = self.fact_labels
+        for lbl in dict(fact_labels):
+            fact = fact_labels[lbl]
+            if fact.depth == D:
+                self.remove_fact(lbl)
+
+    def remove_fact(self, lbl):
+        fact = self.fact_labels[lbl]
+        self.facts.remove(fact)
+        del self.fact_labels[lbl]
+
+    def print_derivation(self, fact_label, derived_fact_labels=None):
+        if derived_fact_labels is None:
+            derived_fact_labels = set()
+
+        fact = self.fact_labels[fact_label]
+        if fact.dependencies != []:
+            thm = fact.conc_thm
+            thm_name = thm.name
+
+            for label in fact.dependencies:
+                if label not in derived_fact_labels:
+                    self.print_derivation(label, derived_fact_labels)
+
+            print(
+                "Applying theorem ", thm_name, " to ", fact.dependencies, " we have: "
+            )
+            fact.do_print()
+            print()
+
+            derived_fact_labels.add(fact_label)
+
+        else:
+            print("By assumption we have: ")
+            fact.do_print()
+            print()
+            derived_fact_labels.add(fact_label)
+
+    def print_relevant_facts(self):
+        for fact_lbl in self.ordered_fact_list:
+            fact = self.fact_labels[fact_lbl]
+            if fact.useful:
+                fact.do_nice_print()
+
+    def print_facts(self):
+        for lbl in self.fact_labels:
+            fact = self.fact_labels[lbl]
+            fact.do_print()
+            print()
+
+    def exec_command(self, cmd):
+        cmd_list = cmd.split()
+        cmd_name = cmd_list[0]
+        cmd_args = cmd_list[1:]
+
+        if cmd_name == "apply":
+            thm_name = cmd_args[0]
+            if thm_name in self.theorem_name_dict:
+                thm = self.theorem_name_dict[thm_name]
+            else:
+                print("theorem name not recognized")
+                return
+            thm_args = cmd_args[1:]
+            in_facts = [self.fact_labels[lbl] for lbl in thm_args]
+            self.apply_thm(thm, in_facts)
+            return
+
+        if cmd_name == "cases":
+            print("DEPRECATED")
+            return
+
+        if cmd_name == "conclude":
+            print("DEPRECATED")
+            return
+
+        if cmd_name == "display":
+            self.print_facts()
+            return
+
+        if cmd_name == "exit":
+            return False
+
+        print("Unkown Command")
+
+
+# Backwards compatible alias
+Proof_environment = ProofEnvironment

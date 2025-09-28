@@ -20,3 +20,10 @@ While the current implementation is fairly basic, combining just a handful of st
 
 python auto2.py
 
+## Notes on recent refactor
+
+I refactored `sylow2.py` to remove a global `prime_list` and replace slow
+prime/divisor utilities with faster implementations (sieve for `primes`,
+efficient `divisors`, and trial-division `prime_factors`). The public API
+used by `auto2.py` is preserved.
+
