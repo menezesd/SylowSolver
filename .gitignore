@@ -1,0 +1,30 @@
+# Haskell build artifacts
+dist-newstyle/
+cabal.project.local
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+
+# GHC temporary files
+.ghc.environment.*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Debug and test executables
+debug_*
+test_debug*
