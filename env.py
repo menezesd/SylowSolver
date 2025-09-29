@@ -12,6 +12,12 @@ class ProofEnvironment:
     """Proof environment maintaining facts, theorems, and search state."""
 
     def __init__(self, facts, theorems, theorem_name_dict, goal):
+        # Optional path to write structured JSON-lines diagnostics for
+        # update_goal_achieved. If None, diagnostics are printed to stdout
+        # as before. This is used during parity debugging to produce
+        # machine-readable dumps that avoid huge stdout logs.
+        self.diagnostic_json_path = None
+
         self.ordered_fact_list = []
         self.facts = []
         self.theorems = theorems
@@ -48,6 +54,14 @@ class ProofEnvironment:
 
     def update_goal_achieved(self, _goal_fact):
 
+        # Reconstruct the set of disjunction labels referenced by observed
+        # goal-disjunction combos and compute the Cartesian product of their
+        # alternatives. Then check whether every full assignment is implied
+        # by at least one observed goal combo. Instrumentation below helps
+        # diagnose cases where the Python and Haskell runs differ.
+        if not self.goal_dis_combos:
+            return
+
         full_dis_set = set(D for D, i in set.union(*(self.goal_dis_combos)))
 
         dis_labels = set(D for D in full_dis_set)  # prevent duplicates
@@ -59,15 +73,86 @@ class ProofEnvironment:
         S = set(frozenset(u) for u in S)
 
         frozen_dis_combos = set(frozenset(d) for d in self.goal_dis_combos)
+
+        # Debug prints to mirror Haskell's instrumentation. Also support
+        # structured JSON-lines diagnostics when self.diagnostic_json_path
+        # is set.
+        try:
+            print("DEBUG update_goal_achieved: goal_dis_combos =", self.goal_dis_combos)
+            print("DEBUG disjunctionSizes =", L)
+            print("DEBUG allPossibleCombos count =", len(S))
+        except Exception:
+            pass
+
+        # For richer diagnostics: for each full assignment, list which observed
+        # goal combos cover it, and for each covering observed combo list the
+        # concrete producer signatures (fact name and args) so we can do a
+        # label-agnostic comparison with the Haskell run.
+        combo_coverings = []  # list of (full_combo, [covering_observed_combos])
         for s in S:
-            found_implication = False
+            covered_by = []
             for dtuple in frozen_dis_combos:
                 if dtuple.issubset(s):
-                    found_implication = True
-                    continue
-            if not found_implication:
+                    covered_by.append(dtuple)
+            combo_coverings.append((s, covered_by))
+
+        # Emit either pretty stdout debug lines (legacy) or a structured
+        # JSON-lines file (recommended for automated diffs).
+        if self.diagnostic_json_path:
+            import json
+
+            try:
+                with open(self.diagnostic_json_path, "a") as fh:
+                    header = {"goal_dis_combos": [sorted(list(d)) for d in frozen_dis_combos], "disjunctionSizes": L, "allPossibleCombos": len(S)}
+                    fh.write(json.dumps({"type": "header", "data": header}) + "\n")
+                    for idx, (full_combo, covered_by) in enumerate(combo_coverings):
+                        entry = {
+                            "full_combo": sorted(list(full_combo)),
+                            "covered_by": [[sorted(list(x)) for x in covered_by]],
+                            "producers": [],
+                        }
+                        # collect producers for each covering observed combo
+                        for cov in covered_by:
+                            producers = []
+                            for (dlabel, i) in cov:
+                                if dlabel in self.fact_labels and i < len(self.fact_labels[dlabel].facts):
+                                    f = self.fact_labels[dlabel].facts[i]
+                                    producers.append((f.name, tuple(f.args)))
+                                else:
+                                    producers.append((None, None))
+                            entry["producers"].append(producers)
+                        fh.write(json.dumps({"type": "combo", "index": idx, "data": entry}) + "\n")
+            except Exception:
+                # Fall back to stdout prints if file write fails
+                pass
+        else:
+            try:
+                # Print first 200 combos to avoid enormous logs in pathological cases
+                for idx, (full_combo, covered_by) in enumerate(combo_coverings):
+                    if idx >= 200:
+                        break
+                    print(f"DEBUG fullCombo #{idx}: {sorted(list(full_combo))}")
+                    print(f"DEBUG coveredBy: { [sorted(list(x)) for x in covered_by] }")
+                    # For each covering observed combo, print its producers (fact label -> (name,args))
+                    for cov in covered_by:
+                        producers = []
+                        for (dlabel, i) in cov:
+                            if dlabel in self.fact_labels and i < len(self.fact_labels[dlabel].facts):
+                                f = self.fact_labels[dlabel].facts[i]
+                                producers.append((dlabel, f.name, tuple(f.args)))
+                            else:
+                                producers.append((dlabel, None, None))
+                        print(f"DEBUG producers for {sorted(list(cov))} -> {producers}")
+            except Exception:
+                pass
+
+        # Now decide if all full combos are covered
+        for full_combo, covered_by in combo_coverings:
+            if not covered_by:
+                print("DEBUG allCovered = False")
                 return
 
+        print("DEBUG allCovered = True")
         self.goal_achieved = True
 
     def update_useful(self, fact):
@@ -87,9 +172,22 @@ class ProofEnvironment:
 
                 self.facts.append(fact)
                 if fact.equals(self.goal):
-                    self.goal_dis_combos.append(fact.dis_ancestors)
-                    self.update_goal_achieved(fact)
-                    self.update_useful(fact)
+                        self.goal_dis_combos.append(fact.dis_ancestors)
+                        # Print signature-mapped ancestors for parity with Haskell
+                        try:
+                            sigs = []
+                            for (dlabel, idx) in fact.dis_ancestors:
+                                if dlabel in self.fact_labels and idx < len(self.fact_labels[dlabel].facts):
+                                    f = self.fact_labels[dlabel].facts[idx]
+                                    sigs.append(((dlabel, idx), (f.name, tuple(f.args))))
+                                else:
+                                    sigs.append(((dlabel, idx), None))
+                            print("DEBUG add_new_facts: recording goal combo from {} -> {}".format(new_label, fact.dis_ancestors))
+                            print("DEBUG add_new_facts: signature-mapped ancestors: {}".format(sigs))
+                        except Exception:
+                            pass
+                        self.update_goal_achieved(fact)
+                        self.update_useful(fact)
 
             if isinstance(fact, Disjunction):
                 new_label = self.new_label(letter="D")
