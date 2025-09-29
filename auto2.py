@@ -105,7 +105,8 @@ def match_facts_to_template(template, facts, init_match_dict=None):
 
 def auto_solve(pf_envir):
 
-    MAX_ITERATIONS = 30
+    # Allow more iterations for deep searches (raise during diagnostics)
+    MAX_ITERATIONS = 1000
 
     thm_matches = (
         {}

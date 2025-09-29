@@ -317,6 +317,14 @@ applyHyperTheorems hyperTheorems = do
               -- Add conclusions and check for changes
               beforeFacts <- length <$> getFacts  
               beforeDisjs <- length <$> getDisjunctions
+
+              -- Debug instrumentation: print which theorem is applied and which
+              -- fact labels (and their combined disjunction ancestry) are used.
+              let labels = dependencyLabels
+              liftIO $ do
+                putStrLn $ "by thm  " ++ hname ++ "  applied to facts  " ++ unwords labels
+                when (not (Set.null inputDisAncestors)) $ putStrLn $ "    ancestors: " ++ show (Set.toList inputDisAncestors)
+
               addConclusions conclusionsWithMetadata
               afterFacts <- length <$> getFacts
               afterDisjs <- length <$> getDisjunctions
