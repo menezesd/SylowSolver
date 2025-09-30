@@ -4,6 +4,7 @@
 -- Implements the "facts + techniques (theorems) + proof search with disjunction dependencies"
 -- architecture from the provided paper draft.
 import           Control.Monad (guard, foldM)
+import           Control.Monad.RWS.Strict (RWS, ask, get, put, runRWS, tell)
 import           Data.List (nub, intercalate)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe)
@@ -75,9 +76,107 @@ data Provenance = ProvHypothesis
                 | ProvTheorem { thmName :: String, parentFacts :: [Fact], fromDisj :: Maybe (Int, Int), provSubs :: Maybe Subst }
                 deriving (Eq, Ord, Show)
 
+-- Structured trace events emitted by the prover (replace simple String logs)
+data TraceEvent = TraceFactInserted { teThm :: String, teFact :: Fact, teParentDeps :: S.Set Dep, teParents :: [Fact], teSubs :: Subst }
+                | TraceDisjInserted { teThm :: String, teDid :: Int, teLabel :: Maybe String, teAlts :: [Fact], teDeps :: S.Set Dep, teSubs :: Subst }
+                deriving (Show)
+
 -- Printing state for numbering and cross-references
 data PrintState = PrintState { psMap :: M.Map String Int, psNext :: Int }
 
+-- Prover monad: RWS over Engine (reader), log as [TraceEvent], and Env state
+-- Top-level Prover helpers so they can be reused and tested
+type ProverM = RWS Engine [TraceEvent] Env
+
+-- Top-level Prover helpers so they can be reused and tested
+insertFactM :: Fact -> ProverM Bool
+insertFactM fact = do
+  env <- get
+  let (env', added) = insertFact fact env
+  put env'
+  if added
+    then tell [TraceFactInserted { teThm = "(insert)", teFact = fact, teParentDeps = fDeps fact, teParents = [], teSubs = M.empty }]
+    else pure ()
+  pure added
+
+insertDisjM :: Disj -> ProverM [Fact]
+insertDisjM d = do
+  env <- get
+  let (env', alts) = insertDisj d env
+  put env'
+  let subs = case dProv d of
+               Just (ProvTheorem { provSubs = m }) -> fromMaybe M.empty m
+               _ -> M.empty
+  tell [TraceDisjInserted { teThm = fromMaybe "(disj)" (dLabel d), teDid = dId d, teLabel = dLabel d, teAlts = dAlts d, teDeps = dDeps d, teSubs = subs }]
+  pure alts
+
+freshNameM :: String -> ProverM String
+freshNameM prefix = do
+  env <- get
+  let (nm, env') = freshName prefix env
+  put env'
+  pure nm
+
+materializeWildcardsM :: [Fact] -> ProverM [Fact]
+materializeWildcardsM facts = do
+  env <- get
+  let (facts', env') = materializeWildcards facts env
+  put env'
+  pure facts'
+
+processThmOutsM :: String -> ThmOut -> S.Set Dep -> [Fact] -> Subst -> ProverM ()
+processThmOutsM thmNameParam thmOut parentDeps parents sigma =
+  case thmOut of
+    TOFact fact -> do
+      facts' <- materializeWildcardsM [fact]
+      let factWithProv = (head facts') { fDeps = parentDeps
+                                       , fProv = Just (ProvTheorem { thmName = thmNameParam, parentFacts = parents, fromDisj = Nothing, provSubs = Just sigma }) }
+      _ <- insertFactM factWithProv
+      tell [TraceFactInserted { teThm = thmNameParam, teFact = factWithProv, teParentDeps = parentDeps, teParents = parents, teSubs = sigma }]
+      pure ()
+
+    TODisj alts -> do
+      alts' <- materializeWildcardsM alts
+      env <- get
+      let label = Just $ thmNameParam ++ "(" ++ intercalate ", " (map (\ff -> fName ff ++ show (fArgs ff)) parents) ++ ")"
+          disj = Disj { dId = eNextDid env
+                      , dAlts = alts'
+                      , dDeps = parentDeps
+                      , dProv = Just (ProvTheorem { thmName = thmNameParam, parentFacts = parents, fromDisj = Nothing, provSubs = Just sigma })
+                      , dLabel = label }
+      _ <- insertDisjM disj
+      -- increment did in state
+      env' <- get
+      put env' { eNextDid = eNextDid env' + 1 }
+      tell [TraceDisjInserted { teThm = thmNameParam, teDid = dId disj, teLabel = dLabel disj, teAlts = dAlts disj, teDeps = dDeps disj, teSubs = sigma }]
+      pure ()
+
+stepRoundM :: ProverM ()
+stepRoundM = do
+   eng' <- ask
+   env0' <- get
+   if S.null (eFrontier env0')
+     then put env0' { eFrontier = S.empty }
+     else do
+       -- compute applications from current env snapshot
+       let factsList = S.toList (eFacts env0')
+           runThm thm@Theorem{..} = do
+             let Template pats = tTemplate
+                 k = length pats
+                 tuples = orderedTuples k factsList
+             concatMap (\tuple -> case matchTemplate tuple tTemplate of
+                                       Nothing -> []
+                                       Just sigma -> let concreteTuple = map (substFact sigma) tuple
+                                                         parentDeps = S.unions (map fDeps concreteTuple)
+                                                         outputs = tApply concreteTuple
+                                                     in map (\out -> (tName, out, parentDeps, concreteTuple, sigma)) outputs
+                        ) tuples
+       let applications = concatMap runThm (thms eng')
+       -- apply each
+       mapM_ (\(tname, out, pdeps, parents, sigma) -> processThmOutsM tname out pdeps parents sigma) applications
+       -- update frontier
+       envFinal <- get
+       put envFinal { eFrontier = S.difference (eFacts envFinal) (eFacts env0') }
 substFact :: Subst -> Fact -> Fact
 substFact s (Fact n as deps prov) = Fact n (map sub as) deps prov
   where sub x | isFixed x = x | isWildcard x = x | otherwise = fromMaybe x (M.lookup x s)
@@ -185,43 +284,7 @@ data Engine = Engine { thms :: [Theorem], maxRounds :: Int, maxCaseSplit :: Int 
 defaultEngine :: Engine
 defaultEngine = Engine [ sylowTheorem, uniqueSylowContradiction, embedIntoAn, orderDividesAlt ] 50 12
 
-stepRound :: Engine -> Env -> Env
-stepRound Engine{..} env0
-  | S.null (eFrontier env0) = env0 { eFrontier = S.empty }
-  | otherwise = let envFinal = foldl applyThmForEnv env0 { eFrontier = S.empty } thms
-                in envFinal { eFrontier = S.difference (eFacts envFinal) (eFacts env0) }
-  where
-    applyThmForEnv env Theorem{..} =
-      let applications = do
-            let Template pats = tTemplate
-                k = length pats
-                factsList = S.toList (eFacts env0)
-            tuple <- orderedTuples k factsList
-            guard (any (`S.member` (eFrontier env0)) tuple)
-            case matchTemplate tuple tTemplate of
-              Nothing -> []
-              Just sigma ->
-                let concreteTuple = map (substFact sigma) tuple
-                    parentDeps = S.unions (map fDeps concreteTuple)
-                    outputs = tApply concreteTuple
-                in return (outputs, parentDeps, concreteTuple, sigma)
-      in foldl (\recEnv (outs, pDeps, parents, sigma) -> foldl (\rEnv out -> processThmOuts tName rEnv out pDeps parents sigma) recEnv outs) env applications
-
-    processThmOuts :: String -> Env -> ThmOut -> S.Set Dep -> [Fact] -> Subst -> Env
-    processThmOuts thmNameParam env (TOFact fact) parentDeps parents sigma =
-      let (facts', env') = materializeWildcards [fact] env
-          factWithProv = (head facts') { fDeps = parentDeps
-                                       , fProv = Just (ProvTheorem { thmName = thmNameParam, parentFacts = parents, fromDisj = Nothing, provSubs = Just sigma }) }
-      in fst $ insertFact factWithProv env'
-
-    processThmOuts thmNameParam env (TODisj alts) parentDeps parents sigma =
-      let (alts', env') = materializeWildcards alts env
-          label = Just $ thmNameParam ++ "(" ++ intercalate ", " (map (\ff -> fName ff ++ show (fArgs ff)) parents) ++ ")"
-          disj = Disj { dId = eNextDid env', dAlts = alts', dDeps = parentDeps
-                      , dProv = Just (ProvTheorem { thmName = thmNameParam, parentFacts = parents, fromDisj = Nothing, provSubs = Just sigma })
-                      , dLabel = label }
-          env_with_inc_did = env' { eNextDid = eNextDid env' + 1 }
-      in fst $ insertDisj disj env_with_inc_did
+-- Note: `stepRound` and its helpers are now implemented inside `runProver` using the RWS-based ProverM.
 
 orderedTuples :: Int -> [a] -> [[a]]; orderedTuples 0 _ = [[]]; orderedTuples _ [] = []; orderedTuples k xs = [ x:ys | x <- xs, ys <- orderedTuples (k-1) xs ]
 
@@ -247,15 +310,19 @@ cartesian :: [[a]] -> [[a]]; cartesian [] = [[]]; cartesian (xs:xss) = [ x:ys | 
 -- Running a proof
 --------------------------------------------------------------------------------
 
-runProver :: Engine -> [Fact] -> Fact -> IO (Bool, Env)
+runProver :: Engine -> [Fact] -> Fact -> IO (Bool, Env, [TraceEvent])
 runProver eng hyps goal = do
+  -- initialize env with hypotheses
   let env0 = foldl (\e h -> fst (insertFact (h { fProv = Just ProvHypothesis }) e)) emptyEnv hyps
-  loop 0 env0
-  where
-    loop i env
-      | proved eng env goal = pure (True, env)
-      | i >= maxRounds eng  = pure (False, env)
-      | otherwise = loop (i+1) (stepRound eng env)
+
+  -- loop using runRWS to execute top-level stepRoundM repeatedly, accumulating logs
+  let loopR 0 env acc = pure (False, env, acc)
+      loopR i env acc =
+        let ((), env', logs) = runRWS stepRoundM eng env
+            acc' = acc ++ logs
+        in if proved eng env' goal then pure (True, env', acc') else loopR (i-1) env' acc'
+
+  loopR (maxRounds eng) env0 []
 
 --------------------------------------------------------------------------------
 -- Proof reconstruction & printing
@@ -392,7 +459,7 @@ goalFalse :: Fact; goalFalse = f "false" []
 example :: Integer -> IO ()
 example n = do
   putStrLn $ "Attempting: no simple group of order " ++ show n
-  (ok, env) <- runProver defaultEngine (hypotheses n) goalFalse
+  (ok, env, _trace) <- runProver defaultEngine (hypotheses n) goalFalse
   if ok
     then do
       putStrLn "✓ CONTRADICTION derived (goal proven)."
