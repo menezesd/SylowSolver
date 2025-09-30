@@ -3,11 +3,8 @@
 -- A tiny, extensible Sylow-based theorem prover prototype in Haskell
 -- Implements the "facts + techniques (theorems) + proof search with disjunction dependencies"
 -- architecture from the provided paper draft.
-
-module Main where
-
-import           Control.Monad (guard)
-import           Data.List (nub)
+import           Control.Monad (guard, foldM)
+import           Data.List (nub, intercalate)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe)
 import qualified Data.Set as S
@@ -22,17 +19,21 @@ data Fact = Fact
   { fName  :: String
   , fArgs  :: [String]
   , fDeps  :: S.Set Dep
+  , fProv  :: Maybe Provenance
   } deriving (Eq, Ord)
 
 instance Show Fact where
-  show (Fact n as deps)
-    | S.null deps = n ++ show as
-    | otherwise   = n ++ show as ++ "  ⟂ deps=" ++ show (S.toList deps)
+  show (Fact n as deps prov)
+    | S.null deps = n ++ show as ++ provStr
+    | otherwise   = n ++ show as ++ "  ⟂ deps=" ++ show (S.toList deps) ++ provStr
+    where provStr = maybe "" (("  ⟦" ++) . (++"⟧") . show) prov
 
 data Disj = Disj
   { dId    :: Int
   , dAlts  :: [Fact]
   , dDeps  :: S.Set Dep
+  , dProv  :: Maybe Provenance
+  , dLabel :: Maybe String
   } deriving (Eq, Ord, Show)
 
 type Dep = (Int, Int)
@@ -53,22 +54,32 @@ matchTemplate facts (Template pats)
   | length facts /= length pats = Nothing
   | otherwise = go M.empty (zip facts pats)
   where
-    go sigma [] = Just sigma
-    go sigma ((Fact fn as _, Fact pn ps _):rest)
-      | fn /= pn || length as /= length ps = Nothing
-      | otherwise = case matchArgs sigma (zip as ps) of
-          Nothing -> Nothing; Just sigma' -> go sigma' rest
-    matchArgs :: Subst -> [(String,String)] -> Maybe Subst
-    matchArgs sigma [] = Just sigma
-    matchArgs sigma ((a,p):xs)
-      | isFixed p  = if a == drop 1 p then matchArgs sigma xs else Nothing -- Corrected
-      | isWildcard p = Nothing
-      | otherwise  = case M.lookup p sigma of
-          Nothing -> matchArgs (M.insert p a sigma) xs
-          Just a' | a' == a -> matchArgs sigma xs | otherwise -> Nothing
+  go sigma [] = Just sigma
+  go sigma ((Fact fn as _ _, Fact pn ps _ _):rest)
+    | fn /= pn || length as /= length ps = Nothing
+    | otherwise = case matchArgs sigma (zip as ps) of
+        Nothing -> Nothing
+        Just sigma' -> go sigma' rest
+
+  matchArgs :: Subst -> [(String,String)] -> Maybe Subst
+  matchArgs sigma [] = Just sigma
+  matchArgs sigma ((a,p):xs)
+    | isFixed p  = if a == drop 1 p then matchArgs sigma xs else Nothing -- Corrected
+    | isWildcard p = Nothing
+    | otherwise  = case M.lookup p sigma of
+        Nothing -> matchArgs (M.insert p a sigma) xs
+        Just a' | a' == a -> matchArgs sigma xs
+                | otherwise -> Nothing
+
+data Provenance = ProvHypothesis
+                | ProvTheorem { thmName :: String, parentFacts :: [Fact], fromDisj :: Maybe (Int, Int), provSubs :: Maybe Subst }
+                deriving (Eq, Ord, Show)
+
+-- Printing state for numbering and cross-references
+data PrintState = PrintState { psMap :: M.Map String Int, psNext :: Int }
 
 substFact :: Subst -> Fact -> Fact
-substFact s (Fact n as deps) = Fact n (map sub as) deps
+substFact s (Fact n as deps prov) = Fact n (map sub as) deps prov
   where sub x | isFixed x = x | isWildcard x = x | otherwise = fromMaybe x (M.lookup x s)
 
 --------------------------------------------------------------------------------
@@ -91,7 +102,11 @@ insertDisj :: Disj -> Env -> (Env, [Fact])
 insertDisj d@Disj{..} env0 = (env', alts')
   where
     env1 = env0 { eDisjs = M.insert dId d (eDisjs env0) }
-    tagAlt ix f' = f' { fDeps = S.unions [fDeps f', dDeps, S.singleton (dId, ix)] }
+    tagAlt ix f' =
+      let altProv = case dProv of
+                      Just (ProvTheorem { thmName = nm, parentFacts = pf, provSubs = ps }) -> Just (ProvTheorem { thmName = nm, parentFacts = pf, fromDisj = Just (dId, ix), provSubs = ps })
+                      other -> other
+      in f' { fDeps = S.unions [fDeps f', dDeps, S.singleton (dId, ix)], fProv = altProv }
     alts' = zipWith tagAlt [0..] dAlts
     (env', _) = foldl (\(e,_) f' -> insertFact f' e) (env1, False) alts'
 
@@ -103,7 +118,7 @@ materializeWildcards facts env0 = (map subst facts, env')
   where
     (env', substs) = foldl step (env0, M.empty) (nub (concatMap fArgs facts))
     step (e, m) a | isWildcard a = let base = drop 1 a; (nm, e') = freshName (if null base then "X" else base ++ "_") e in (e', M.insert a nm m) | otherwise = (e, m)
-    subst (Fact n as deps) = Fact n (map (\x -> M.findWithDefault x x substs) as) deps
+    subst (Fact n as deps prov) = Fact n (map (\x -> M.findWithDefault x x substs) as) deps prov
 
 --------------------------------------------------------------------------------
 -- Theorems (Engine handles dependencies)
@@ -111,7 +126,8 @@ materializeWildcards facts env0 = (map subst facts, env')
 
 data ThmOut = TOFact Fact | TODisj [Fact] deriving (Eq, Show)
 data Theorem = Theorem { tName :: String, tTemplate :: Template, tApply :: [Fact] -> [ThmOut] }
-f :: String -> [String] -> Fact; f n as = Fact n as S.empty
+
+f :: String -> [String] -> Fact; f n as = Fact n as S.empty Nothing
 
 primesUpTo :: Integer -> [Integer]
 primesUpTo n = sieve [2..n]
@@ -125,6 +141,7 @@ primeFactors n = go n (primesUpTo (limit :: Integer) ++ [n])
     go 1 _ = []
     go _ [] = []
     go m (p:ps) = if m `mod` p == 0 then p : go (m `div` p) (p:ps) else go m ps
+
 uniq :: Ord a => [a] -> [a]; uniq = S.toList . S.fromList
 allDivisors :: Integer -> [Integer]; allDivisors n = uniq $ map product (sequence [ [p^e | e <- [0..k]] | (p,k) <- run (primeFactors n)]) where run [] = []; run (x:xs) = let (same,rest) = span (==x) xs in (x, 1 + length same) : run rest
 factorial :: Integer -> Integer; factorial m = product [1..m]
@@ -132,7 +149,7 @@ factorial :: Integer -> Integer; factorial m = product [1..m]
 sylowTheorem :: Theorem
 sylowTheorem = Theorem "SylowDivisibilityCongruence" (Template [ f "group" ["G"], f "order" ["G","n"] ])
   (\args -> case args of
-      [_, Fact _ [_, nStr] _] ->
+      [_, Fact _ [_, nStr] _ _] ->
         let n = read nStr :: Integer
             ps = uniq (primeFactors n)
             mkDisj p = let ks = [k | k <- allDivisors n, k `mod` p == 1]; alts = [ f "numSylow" [show p, "G", show k] | k <- ks ]
@@ -147,13 +164,13 @@ uniqueSylowContradiction = Theorem "UniqueSylowImpliesNotSimple" (Template [ f "
 embedIntoAn :: Theorem
 embedIntoAn = Theorem "EmbedIntoAlternatingViaSylowAction" (Template [ f "simple" ["G"], f "numSylow" ["p","G","m"] ])
   (\args -> case args of
-      [_, Fact _ [_,_,m] _] -> let m' = read m :: Integer in if m' > 1 then [ TOFact (f "embedInAlt" ["G",m]) ] else []
+      [_, Fact _ [_,_,m] _ _] -> let m' = read m :: Integer in if m' > 1 then [ TOFact (f "embedInAlt" ["G",m]) ] else []
       _ -> [])
 
 orderDividesAlt :: Theorem
 orderDividesAlt = Theorem "OrderMustDivideAlt" (Template [ f "embedInAlt" ["G","m"], f "order" ["G","n"] ])
   (\args -> case args of
-      [Fact _ [_, mStr] _, Fact _ [_, nStr] _] ->
+      [Fact _ [_, mStr] _ _, Fact _ [_, nStr] _ _] ->
         let m = read mStr :: Integer
             n = read nStr :: Integer
             aOrder = factorial m `div` 2
@@ -187,16 +204,22 @@ stepRound Engine{..} env0
                 let concreteTuple = map (substFact sigma) tuple
                     parentDeps = S.unions (map fDeps concreteTuple)
                     outputs = tApply concreteTuple
-                in return (outputs, parentDeps)
-      in foldl (\acc_env (outs, pDeps) -> foldl (\e o -> processThmOuts e o pDeps) acc_env outs) env applications
+                in return (outputs, parentDeps, concreteTuple, sigma)
+      in foldl (\recEnv (outs, pDeps, parents, sigma) -> foldl (\rEnv out -> processThmOuts tName rEnv out pDeps parents sigma) recEnv outs) env applications
 
-    processThmOuts :: Env -> ThmOut -> S.Set Dep -> Env
-    processThmOuts env (TOFact fact) parentDeps =
+    processThmOuts :: String -> Env -> ThmOut -> S.Set Dep -> [Fact] -> Subst -> Env
+    processThmOuts thmNameParam env (TOFact fact) parentDeps parents sigma =
       let (facts', env') = materializeWildcards [fact] env
-      in fst $ insertFact (head facts') { fDeps = parentDeps } env'
-    processThmOuts env (TODisj alts) parentDeps =
+          factWithProv = (head facts') { fDeps = parentDeps
+                                       , fProv = Just (ProvTheorem { thmName = thmNameParam, parentFacts = parents, fromDisj = Nothing, provSubs = Just sigma }) }
+      in fst $ insertFact factWithProv env'
+
+    processThmOuts thmNameParam env (TODisj alts) parentDeps parents sigma =
       let (alts', env') = materializeWildcards alts env
-          disj = Disj { dId = eNextDid env', dAlts = alts', dDeps = parentDeps }
+          label = Just $ thmNameParam ++ "(" ++ intercalate ", " (map (\ff -> fName ff ++ show (fArgs ff)) parents) ++ ")"
+          disj = Disj { dId = eNextDid env', dAlts = alts', dDeps = parentDeps
+                      , dProv = Just (ProvTheorem { thmName = thmNameParam, parentFacts = parents, fromDisj = Nothing, provSubs = Just sigma })
+                      , dLabel = label }
           env_with_inc_did = env' { eNextDid = eNextDid env' + 1 }
       in fst $ insertDisj disj env_with_inc_did
 
@@ -226,13 +249,136 @@ cartesian :: [[a]] -> [[a]]; cartesian [] = [[]]; cartesian (xs:xss) = [ x:ys | 
 
 runProver :: Engine -> [Fact] -> Fact -> IO (Bool, Env)
 runProver eng hyps goal = do
-  let env0 = foldl (\e h -> fst (insertFact h e)) emptyEnv hyps
+  let env0 = foldl (\e h -> fst (insertFact (h { fProv = Just ProvHypothesis }) e)) emptyEnv hyps
   loop 0 env0
   where
     loop i env
       | proved eng env goal = pure (True, env)
       | i >= maxRounds eng  = pure (False, env)
       | otherwise = loop (i+1) (stepRound eng env)
+
+--------------------------------------------------------------------------------
+-- Proof reconstruction & printing
+--------------------------------------------------------------------------------
+
+findGoalAssignments :: Engine -> Env -> Fact -> [[(Int,Int)]]
+findGoalAssignments _eng env@Env{..} goalPat =
+  let instances = [ fct | fct <- S.toList eFacts, fName fct == fName goalPat, fArgs fct == fArgs goalPat]
+      allDeps = S.unions (map fDeps instances)
+      disjIds = S.toList (S.map fst allDeps)
+      arities = map (\did -> (did, length (fromMaybe [] (fmap dAlts (M.lookup did eDisjs))))) disjIds
+  in if any (\(_, ar) -> ar == 0) arities then [[]]
+     else if null disjIds then [[]]
+     else let assignments = cartesian [ [ (did,ix) | ix <- [0..arity-1] ] | (did,arity) <- arities]
+              ok assign = any (\inst -> fDeps inst `S.isSubsetOf` S.fromList assign) instances
+          in filter ok assignments
+
+findMatchingInstance :: Env -> Fact -> [(Int,Int)] -> Maybe Fact
+findMatchingInstance Env{..} goalFact assign =
+  let instances = [ fct | fct <- S.toList eFacts, fName fct == fName goalFact, fArgs fct == fArgs goalFact]
+      assignSet = S.fromList assign
+  in case [ i | i <- instances, fDeps i `S.isSubsetOf` assignSet ] of
+       (x:_) -> Just x
+       [] -> case instances of { (x:_) -> Just x; [] -> Nothing }
+
+prettyPrintProof :: Engine -> Env -> Fact -> IO ()
+prettyPrintProof eng env@Env{..} goalPat = do
+  let assigns = findGoalAssignments eng env goalPat
+  if null assigns
+    then putStrLn "No proof assignments found."
+    else do
+      let assignsList = assigns
+      _ <- foldM (\pst assign -> do
+                   putStrLn "--- Case assignment ---"
+                   let mapping = M.fromList assign
+                   mapM_ (\(did, idx) -> do
+                            case M.lookup did eDisjs of
+                              Nothing -> putStrLn $ "disj " ++ show did ++ " -> " ++ show idx
+                              Just Disj{..} -> do
+                                case dLabel of
+                                  Just lab -> putStrLn $ lab ++ " => chosen alt " ++ show idx
+                                  Nothing  -> putStrLn $ "disjunction " ++ show did ++ " => chosen alt " ++ show idx
+                                mapM_ (\(i,a) -> do
+                                          -- determine whether choosing this alternative would also lead to a proof
+                                          let assign' = map (\(x,y) -> if x == did then (x,i) else (x,y)) assign
+                                              wouldWork = assign' `elem` assigns
+                                              marker = if i == idx then "*" else " "
+                                              status = if i == idx then "(chosen)" else if wouldWork then "(ok)" else "(fails)"
+                                          putStrLn $ "  " ++ marker ++ "[" ++ show i ++ "] " ++ factPretty a ++ " " ++ status
+                                       ) (zip [0..] dAlts)
+                         ) (M.toList mapping)
+                   putStrLn "Proof:";
+                   case findMatchingInstance env goalPat assign of
+                     Nothing -> putStrLn "  (no matching instance)" >> pure pst
+                     Just inst -> do
+                       pst' <- printFactRec' env inst assign 0 S.empty pst
+                       pure pst'
+                 ) (PrintState M.empty 1) assignsList
+      pure ()
+    
+
+-- New variant: returns updated PrintState, assigns numbers to facts and prints cross-refs
+printFactRec' :: Env -> Fact -> [(Int,Int)] -> Int -> S.Set String -> PrintState -> IO PrintState
+printFactRec' env fact assign indent visited pst =
+  let key = fName fact ++ show (fArgs fact) ++ show (S.toList (fDeps fact))
+      pad n = replicate (n*2) ' '
+  in case M.lookup key (psMap pst) of
+       Just n -> do
+         putStrLn $ pad indent ++ "(see #" ++ show n ++ ") " ++ factPretty fact
+         pure pst
+       Nothing -> do
+         let myId = psNext pst
+             pst' = pst { psMap = M.insert key myId (psMap pst), psNext = myId + 1 }
+         putStrLn $ pad indent ++ "[" ++ show myId ++ "] " ++ factPretty fact
+         case fProv fact of
+           Nothing -> do
+             -- try to infer provenance from disjunction deps
+             let depsList = S.toList (fDeps fact)
+             case depsList of
+               ((did, idx):_) -> case M.lookup did (eDisjs env) of
+                 Just Disj{..} -> case dProv of
+                   Just (ProvTheorem { thmName = nm, parentFacts = parents, provSubs = subs }) -> do
+                     let subsStr = case subs of
+                                     Nothing -> ""
+                                     Just s -> "  {" ++ intercalate ", " (map (\(k,v) -> k ++ " := " ++ v) (M.toList s)) ++ "}"
+                     putStrLn $ pad indent ++ "  — by " ++ nm ++ subsStr ++ " (from disjunction " ++ fromMaybe (show did) dLabel ++ ", alt " ++ show idx ++ ")"
+                     let visited' = S.insert key visited
+                     foldM (\uacc p -> do
+                              case findMatchingInstance env p assign of
+                                Just par -> printFactRec' env par assign (indent+1) visited' uacc
+                                Nothing -> do
+                                  putStrLn $ pad (indent+1) ++ "(missing parent) " ++ factPretty p
+                                  pure uacc
+                           ) pst' parents
+                   _ -> do
+                     putStrLn $ pad indent ++ "  — by unknown provenance"
+                     pure pst'
+                 Nothing -> do
+                   putStrLn $ pad indent ++ "  — by unknown provenance"
+                   pure pst'
+               [] -> do
+                 putStrLn $ pad indent ++ "  — by unknown provenance"
+                 pure pst'
+           Just ProvHypothesis -> do
+             putStrLn $ pad indent ++ "  — hypothesis"
+             pure pst'
+           Just (ProvTheorem { thmName = nm, parentFacts = parents, fromDisj = _, provSubs = subs }) -> do
+             let subsStr = case subs of
+                             Nothing -> ""
+                             Just s -> "  {" ++ intercalate ", " (map (\(k,v) -> k ++ " := " ++ v) (M.toList s)) ++ "}"
+             putStrLn $ pad indent ++ "  — by " ++ nm ++ subsStr ++ " (from: " ++ intercalate ", " (map factPretty parents) ++ ")"
+             let visited' = S.insert key visited
+             -- fold parents threading the PrintState
+             foldM (\uacc p -> do
+                      case findMatchingInstance env p assign of
+                        Just par -> printFactRec' env par assign (indent+1) visited' uacc
+                        Nothing -> do
+                          putStrLn $ pad (indent+1) ++ "(missing parent) " ++ factPretty p
+                          pure uacc
+                   ) pst' parents
+
+factPretty :: Fact -> String
+factPretty (Fact n as _ _) = n ++ "(" ++ intercalate ", " as ++ ")"
 
 --------------------------------------------------------------------------------
 -- Examples
@@ -246,8 +392,12 @@ goalFalse :: Fact; goalFalse = f "false" []
 example :: Integer -> IO ()
 example n = do
   putStrLn $ "Attempting: no simple group of order " ++ show n
-  (ok, _) <- runProver defaultEngine (hypotheses n) goalFalse
-  putStrLn $ if ok then "✓ CONTRADICTION derived (goal proven)." else "✗ Could not derive contradiction."
+  (ok, env) <- runProver defaultEngine (hypotheses n) goalFalse
+  if ok
+    then do
+      putStrLn "✓ CONTRADICTION derived (goal proven)."
+      prettyPrintProof defaultEngine env goalFalse
+    else putStrLn "✗ Could not derive contradiction."
 
 main :: IO ()
 main = do
