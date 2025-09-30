@@ -36,13 +36,16 @@ module StateEnvironment (
 ) where
 
 import Core
-import Control.Monad (when, unless)
+-- when/unless are available from Prelude in recent GHCs; avoid redundant import
 import Control.Monad.State.Strict
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe (fromMaybe)
+import System.IO (IOMode(AppendMode), hPutStrLn, withFile)
+import Data.List (intercalate, sort)
+import Data.Bits (xor)
 
 -- | Type aliases for clarity
 type FactMap = Map FactLabel Fact
@@ -55,6 +58,7 @@ data ProofEnvironment = ProofEnvironment
     , peTheorems :: [Theorem]
     , peTheoremMap :: TheoremMap
     , peDisjunctions :: [Disjunction]
+  , peDisjunctionMap :: Map String Disjunction
     , peGoal :: Fact
     , peGoalAchieved :: Bool
     , peGoalDisCombos :: [Set DisjunctionAncestor]
@@ -68,11 +72,12 @@ data ProofEnvironment = ProofEnvironment
     , peSolvedCases :: Int
     , peCaseDisjunction :: Maybe Disjunction
     , peCaseFact :: Maybe Fact
+  , peDiagnosticJsonPath :: Maybe FilePath
     } deriving (Show)
 
 -- | The ProofM monad wraps State ProofEnvironment with IO for printing
-newtype ProofM a = ProofM { unProofM :: StateT ProofEnvironment IO a }
-    deriving newtype (Functor, Applicative, Monad, MonadState ProofEnvironment, MonadIO)
+newtype ProofM a = ProofM (StateT ProofEnvironment IO a)
+  deriving newtype (Functor, Applicative, Monad, MonadState ProofEnvironment, MonadIO)
 
 -- | Run the ProofM computation, returning both result and final state
 runProofM :: ProofM a -> ProofEnvironment -> IO (a, ProofEnvironment)
@@ -108,11 +113,17 @@ createProofEnvironment facts theorems goal = do
         , peSolvedCases = 0
         , peCaseDisjunction = Nothing
         , peCaseFact = Nothing
+  , peDiagnosticJsonPath = Nothing
+    , peDisjunctionMap = Map.empty
         }
   -- Add initial facts using the ProofM monad
   env1 <- execProofM (addNewFacts facts) initialEnv
   let symbolSet = Set.fromList $ concatMap factArgs (peFacts env1)
-  return $ env1 { peSymbolSet = symbolSet }
+  -- Build the disjunction map from any disjunctions registered during
+  -- initialization so newDisjunctionLabel can consult it consistently.
+  let disjPairs = [ (lbl, dj) | dj <- peDisjunctions env1, let lbl = case disjunctionLabel dj of Just l -> l; Nothing -> "" , lbl /= "" ]
+      disjMap = Map.fromList disjPairs
+  return $ env1 { peSymbolSet = symbolSet, peDisjunctionMap = disjMap }
 
 -- ============================================================================
 -- State Accessors (clean monadic interface)
@@ -181,6 +192,51 @@ newLabel prefix = do
   modify $ \e -> e { peCurFactNum = peCurFactNum e + 1 }
   return label
 
+-- | Produce a deterministic disjunction label from a canonical signature
+newDisjunctionLabel :: Disjunction -> String -> ProofM FactLabel
+newDisjunctionLabel disj prefix = do
+  -- Build canonical signature for this disjunction
+  let canon = canonicalDisjunctionSignature disj
+      num = (abs $ hashString canon) `mod` 1000000
+      label0 = prefix ++ show num
+
+  -- If a disjunction with the same numeric label already exists, reuse
+  -- it when the canonical signatures match. We keep a dedicated map of
+  -- disjunction-label -> Disjunction for this purpose (peDisjunctionMap).
+  existing <- gets (Map.lookup label0 . peDisjunctionMap)
+  -- define probe inside the do-block so it can capture `num` and `disj`
+  let probe :: Int -> ProofM FactLabel
+      probe n = do
+        let lbl = prefix ++ show ((num + n) `mod` 1000000)
+        existing' <- gets (Map.lookup lbl . peDisjunctionMap)
+        case existing' of
+          Nothing -> return lbl
+          Just ex2 -> if canonicalDisjunctionSignature ex2 == canonicalDisjunctionSignature disj
+                        then return lbl
+                        else probe (n + 1)
+  case existing of
+    Just ex -> if canonicalDisjunctionSignature ex == canon
+                 then return label0
+                 else probe 1
+    Nothing -> return label0
+
+-- Very small non-cryptographic hash for determinism and portability
+hashString :: String -> Int
+hashString = abs . foldl (\h c -> h * 16777619 `xor` fromEnum c) 2166136261
+
+-- | Build canonical disjunction signature (pure helper)
+canonicalDisjunctionSignature :: Disjunction -> String
+canonicalDisjunctionSignature d =
+  let sigs = map (\f -> factName f ++ ":" ++ intercalate "," (factArgs f)) (disjunctionFacts d)
+      sortedSigs = sort sigs
+      thmPart = case disjunctionConcludingTheorem d of
+                  Just t -> ["thm:" ++ t]
+                  Nothing -> []
+      ancSet = disjunctionDisAncestors d
+      ancLabels = sort $ map fst (Set.toList ancSet)
+      ancPart = if null ancLabels then [] else ["anc:" ++ intercalate "," ancLabels]
+  in intercalate "|" (sortedSigs ++ thmPart ++ ancPart)
+
 -- | Update goal achievement status - now monadic
 updateGoalAchieved :: Fact -> ProofM ()
 updateGoalAchieved _goalFact = do
@@ -230,6 +286,67 @@ updateGoalAchieved _goalFact = do
                    ) covers
           ) sample
     putStrLn $ "DEBUG allCovered = " ++ show allCovered
+    -- If not all covered, print a compact summary of uncovered combos so
+    -- we can inspect which full assignments are missing producers.
+    unless allCovered $ do
+      let uncovered = filter (null . snd) comboCoverings
+      putStrLn $ "DEBUG uncovered count = " ++ show (length uncovered)
+      let sampleUncov = take 10 uncovered
+      mapM_ (\(full, _) -> putStrLn $ "  uncovered fullCombo: " ++ show (Set.toList full)) sampleUncov
+
+  -- Optionally write a JSON-lines diagnostics file matching the Python
+  -- reporter when a path is provided in the environment. We keep the
+  -- format minimal and structural so the existing compare tooling can
+  -- consume it.
+  mpath <- gets peDiagnosticJsonPath
+  case mpath of
+    Nothing -> return ()
+    Just path -> do
+      -- Pure helpers to render JSON-like structures
+      let serializeAnc :: (String, Int) -> String
+          serializeAnc (lbl, idx) = "[" ++ show lbl ++ "," ++ show idx ++ "]"
+
+          serializeAncSet :: Set DisjunctionAncestor -> String
+          serializeAncSet s = "[" ++ intercalate "," (map serializeAnc (Set.toList s)) ++ "]"
+
+          -- Sort combos deterministically by their JSON-like string
+          serializeGoalDisCombos :: [Set DisjunctionAncestor] -> String
+          serializeGoalDisCombos gcs =
+            let lists = map (map (\(l,i) -> (l,i)) . Set.toList) gcs
+                asJsonLike = map (\lst -> "[" ++ intercalate "," (map (\(l,i) -> "[" ++ show l ++ "," ++ show i ++ "]") lst) ++ "]") lists
+                sorted = sort asJsonLike
+            in "[" ++ intercalate "," sorted ++ "]"
+
+          serializeDisSizes :: [(String, Int)] -> String
+          serializeDisSizes ds = "[" ++ intercalate "," (map (\(l,n) -> "[" ++ show l ++ "," ++ show n ++ "]") ds) ++ "]"
+
+          serializeArgs :: [String] -> String
+          serializeArgs args = "[" ++ intercalate "," (map show args) ++ "]"
+
+          producersFor :: Set DisjunctionAncestor -> String
+          producersFor rc = let prods = findFactsByAnc rc
+                            in "[" ++ intercalate "," (map (\(_,f) -> "[" ++ show (factName f) ++ "," ++ serializeArgs (factArgs f) ++ "]") prods) ++ "]"
+
+          serializeFactSig f = "[" ++ show (factName f) ++ "," ++ serializeArgs (factArgs f) ++ "]"
+          -- include canonical signature as a third element for each disjunction
+          disjunctionSignaturesStr = "[" ++ intercalate "," (map (\f -> let lbl = fromMaybe "" (disjunctionLabel f)
+                                                                                   in "[" ++ show lbl ++ "," ++ "[" ++ intercalate "," (map serializeFactSig (disjunctionFacts f)) ++ "]" ++ "," ++ show (canonicalDisjunctionSignature f) ++ "]") disjs) ++ "]"
+
+          headerStr = "{\"type\": \"header\", \"data\": {\"goal_dis_combos\": " ++ serializeGoalDisCombos goalCombos ++ ", \"disjunctionSizes\": " ++ serializeDisSizes disjunctionSizes ++ ", \"disjunctionSignatures\": " ++ disjunctionSignaturesStr ++ ", \"allPossibleCombos\": " ++ show (length allPossibleCombos) ++ "}}"
+
+      liftIO $ withFile path AppendMode (\h -> do
+        hPutStrLn h headerStr
+        -- write each combo
+        mapM_ (\i -> do
+               let (full, covers) = comboCoverings !! i
+                   full_json = serializeAncSet full
+                   covered_json = "[" ++ intercalate "," (map serializeAncSet covers) ++ "]"
+                   producers_json = "[" ++ intercalate "," (map producersFor covers) ++ "]"
+                   producers_for_full = producersFor full
+                   comboLine = "{\"type\": \"combo\", \"index\": " ++ show i ++ ", \"data\": {\"full_combo\": " ++ full_json ++ ", \"covered_by\": " ++ covered_json ++ ", \"producers\": " ++ producers_json ++ ", \"producers_for_full\": " ++ producers_for_full ++ "}}"
+               hPutStrLn h comboLine
+            ) [0 .. length comboCoverings - 1])
+      return ()
 
   when (allCovered && not (null goalCombos) && not (null allPossibleCombos)) $
     setGoalAchieved True
@@ -243,20 +360,18 @@ generateAllPossibleCombinations ((label, size):rest) =
   in [Set.insert thisCase restCombo | thisCase <- thisCases, restCombo <- restCombos]
 
 -- | Check coverage - pure helper (unchanged)
-isComboCoveredByGoal :: [Set DisjunctionAncestor] -> Set DisjunctionAncestor -> Bool
-isComboCoveredByGoal goalCombos combination =
-  any (\combo -> Set.isSubsetOf combo combination) goalCombos
+-- NOTE: coverage check helper removed; keep the logic local in updateGoalAchieved
 
 -- | Update useful facts - now monadic
 updateUseful :: FactLabel -> ProofM ()
-updateUseful factLabel = do
+updateUseful flbl = do
   factLabels <- gets peFactLabels
-  case Map.lookup factLabel factLabels of
+  case Map.lookup flbl factLabels of
     Nothing -> return ()
     Just fact -> do
       unless (factUseful fact) $ do
         let updatedFact = fact { factUseful = True }
-        modify $ \env -> env { peFactLabels = Map.insert factLabel updatedFact (peFactLabels env) }
+        modify $ \env -> env { peFactLabels = Map.insert flbl updatedFact (peFactLabels env) }
         mapM_ updateUseful (factDependencies fact)
 
 -- | Add new facts - now monadic with automatic state management
@@ -332,17 +447,19 @@ addNewDisjunctions (disj:rest) = do
     if isDuplicate
       then addNewDisjunctions rest
       else do
-      label <- newLabel "D"
-      let disjWithLabel = disj { disjunctionLabel = Just label }
+        label <- newDisjunctionLabel disj "D"
+        let disjWithLabel = disj { disjunctionLabel = Just label }
 
-      -- Print a summary for the disjunction and its alternatives
-      liftIO $ do
-        putStrLn $ label ++ " :"
-        mapM_ (\(i,f) -> putStrLn $ show f ++ "\n    OR") (zip [0..] (disjunctionFacts disjWithLabel))
+        -- Print a summary for the disjunction and its alternatives
+        liftIO $ do
+          putStrLn $ label ++ " :"
+          mapM_ (\(_i,f) -> putStrLn $ show f ++ "\n    OR") (zip [0 :: Int ..] (disjunctionFacts disjWithLabel))
 
-      addDisjunction disjWithLabel
-      processDisjunctionFacts disjWithLabel
-      addNewDisjunctions rest
+        addDisjunction disjWithLabel
+        -- register in the disjunction map for canonical lookup
+        modify $ \env -> env { peDisjunctionMap = Map.insert label disjWithLabel (peDisjunctionMap env) }
+        processDisjunctionFacts disjWithLabel
+        addNewDisjunctions rest
 
 -- | Check if disjunction exists - pure helper (unchanged)
 disjunctionExists :: Disjunction -> [Disjunction] -> Bool
@@ -446,39 +563,16 @@ applyTheorem theorem facts = do
 -- | Prune disjunctions - now monadic
 pruneDisjunctions :: ProofM ()
 pruneDisjunctions = do
-  facts <- getFacts
-  disjs <- getDisjunctions
-  
-  -- Find false facts that eliminate disjunction alternatives (same logic)
-  let isFalse f = factName f == "false"
-      falseFacts = filter isFalse facts
-      
-      -- Only eliminate if contradiction depends on exactly one alternative
-      directElims = [ pair
-                    | f <- falseFacts
-                    , let anc = factDisAncestors f
-                    , Set.size anc == 1
-                    , let [pair] = Set.toList anc
-                    ]
-      
-      elimMap = foldr (\(d,i) m -> Map.insertWith Set.union d (Set.singleton i) m) Map.empty directElims
-      
-  -- NOTE: promotion of disjunction alternatives (removing a
-  -- disjunction ancestor from facts when only one alternative
-  -- remains) was implemented here previously. That transformation
-  -- mutates ancestry sets of existing facts which can make earlier
-  -- recorded contradiction-ancestor combos appear to cover more
-  -- full combinations than they actually do. The reference Python
-  -- implementation does not perform this promotion behavior, and
-  -- enabling it made the Haskell solver conclude a global
-  -- contradiction incorrectly on some inputs (e.g. order 60).
-  -- For parity and soundness, skip promotion here.
+  -- Intentionally a no-op: we avoid promoting alternatives to preserve
+  -- parity with the Python implementation which does not mutate ancestry
+  -- sets. Previously this function performed eliminations that led to
+  -- incorrect global contradictions on some inputs.
   return ()
 
 -- | Print derivation - now monadic
 printDerivation :: FactLabel -> ProofM ()
-printDerivation factLabel = do
+printDerivation flbl = do
   factLabels <- gets peFactLabels
-  case Map.lookup factLabel factLabels of
-    Nothing -> liftIO $ putStrLn $ "Fact " ++ factLabel ++ " not found."
+  case Map.lookup flbl factLabels of
+    Nothing -> liftIO $ putStrLn $ "Fact " ++ flbl ++ " not found."
     Just fact -> liftIO $ putStrLn $ "Fact: " ++ show fact

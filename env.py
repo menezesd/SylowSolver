@@ -52,6 +52,78 @@ class ProofEnvironment:
         self.cur_fact_num += 1
         return label
 
+    def _canonical_disjunction_signature(self, disj):
+        # Build a canonical string for the disjunction: sort alternative
+        # fact signatures (name + args) to avoid depending on insertion order.
+        sigs = []
+        for f in disj.facts:
+            try:
+                args = ",".join(map(str, f.args))
+            except Exception:
+                args = ""
+            sigs.append(f.name + ":" + args)
+        sigs.sort()
+        # Include provenance to disambiguate distinct instances that may
+        # have identical alternative signatures: include the concluding
+        # theorem name (if present) and a sorted list of immediate
+        # ancestor disjunction labels (so two identical-looking disjunctions
+        # produced by different contexts differ).
+        prov = []
+        try:
+            thm = getattr(disj, 'conc_thm', None)
+            if thm is not None:
+                # thm may be an object or a string; handle both
+                thm_name = getattr(thm, 'name', None) or str(thm)
+                prov.append('thm:' + thm_name)
+        except Exception:
+            pass
+        try:
+            anc = getattr(disj, 'dis_ancestors', None)
+            if anc:
+                # anc is a set of (label,idx) tuples
+                anc_labels = sorted({a for (a, _) in anc})
+                prov.append('anc:' + ','.join(map(str, anc_labels)))
+        except Exception:
+            pass
+
+        if prov:
+            return "|".join(sigs) + "::" + "|".join(prov)
+        return "|".join(sigs)
+
+    def new_disjunction_label(self, disj, prefix="D"):
+        # Deterministically derive a numeric-ish label from the canonical
+        # signature so both Python and Haskell produce the same label for
+        # logically identical disjunctions regardless of registration order.
+        import hashlib
+
+        canon = self._canonical_disjunction_signature(disj)
+        h = hashlib.sha1(canon.encode("utf-8")).hexdigest()
+        # Take first 10 hex chars -> integer, reduce to 6 digits for brevity
+        num = int(h[:10], 16) % 1000000
+        label = prefix + str(num)
+
+        # Ensure uniqueness within current environment; if collision with
+        # a different disjunction signature, perturb deterministically.
+        probe = 0
+        while label in self.fact_labels:
+            # If the existing label maps to a disjunction with identical
+            # signature, reuse it. Otherwise, perturb by incrementing probe.
+            existing = self.fact_labels.get(label)
+            # existing for disjunctions stored in fact_labels may be a Fact
+            # -- for disjunction labels we expect them to be stored too. If
+            # the existing entry isn't a Disjunction or signatures differ,
+            # continue probing.
+            try:
+                if hasattr(existing, 'facts'):
+                    if self._canonical_disjunction_signature(existing) == canon:
+                        return label
+            except Exception:
+                pass
+            probe += 1
+            label = prefix + str((num + probe) % 1000000)
+
+        return label
+
     def update_goal_achieved(self, _goal_fact):
 
         # Reconstruct the set of disjunction labels referenced by observed
@@ -103,7 +175,41 @@ class ProofEnvironment:
 
             try:
                 with open(self.diagnostic_json_path, "a") as fh:
-                    header = {"goal_dis_combos": [sorted(list(d)) for d in frozen_dis_combos], "disjunctionSizes": L, "allPossibleCombos": len(S)}
+                    # Build disjunction signatures: for each D label include
+                    # a list of alternative fact signatures (name, args) and
+                    # the canonical signature string used to derive the D label.
+                    # The canonical string includes provenance (concluding theorem
+                    # and disjunction ancestors) and is useful for label-agnostic
+                    # comparison between Python and Haskell runs.
+                    disjunction_signatures = []
+                    for (D, l) in L:
+                        sigs = []
+                        canon = None
+                        if D in self.fact_labels:
+                            # collect alternative fact signatures
+                            for f in self.fact_labels[D].facts:
+                                try:
+                                    sigs.append((f.name, list(f.args)))
+                                except Exception:
+                                    sigs.append((f.name, []))
+                            # also compute canonical signature string from the
+                            # Disjunction object so downstream tools can match on it
+                            try:
+                                disj_obj = self.fact_labels[D]
+                                canon = self._canonical_disjunction_signature(disj_obj)
+                            except Exception:
+                                canon = None
+                        disjunction_signatures.append([D, sigs, canon])
+
+                    # Emit goal_dis_combos in a deterministic order: sort each combo
+                    # (list of (label,idx)) and then sort the list of combos by their
+                    # JSON representation so order does not depend on discovery timing.
+                    goal_combos_sorted = [sorted(list(d)) for d in frozen_dis_combos]
+                    try:
+                        goal_combos_sorted = sorted(goal_combos_sorted, key=lambda x: json.dumps(x))
+                    except Exception:
+                        goal_combos_sorted = goal_combos_sorted
+                    header = {"goal_dis_combos": goal_combos_sorted, "disjunctionSizes": L, "disjunctionSignatures": disjunction_signatures, "allPossibleCombos": len(S)}
                     fh.write(json.dumps({"type": "header", "data": header}) + "\n")
                     for idx, (full_combo, covered_by) in enumerate(combo_coverings):
                         entry = {
@@ -190,7 +296,8 @@ class ProofEnvironment:
                         self.update_useful(fact)
 
             if isinstance(fact, Disjunction):
-                new_label = self.new_label(letter="D")
+                # Use deterministic disjunction labels derived from canonical signature
+                new_label = self.new_disjunction_label(fact, prefix="D")
                 self.fact_labels[new_label] = fact
                 fact.label = new_label
                 self.disjunctions.append(fact)

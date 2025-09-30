@@ -27,4 +27,4 @@ Thumbs.db
 
 # Debug and test executables
 debug_*
-test_debug*
+test_debug*reports/*.jsonl

@@ -16,6 +16,7 @@ import Control.Monad.State.Strict
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.List (intercalate, nub, sort)
 import qualified Data.Map.Strict as M
+import System.Environment (lookupEnv)
 
 -- | Format a fact for human-readable display with branch context (unchanged)
 formatFact :: Fact -> String
@@ -128,8 +129,13 @@ main = do
                    ]
   
   env <- createProofEnvironment initialFacts theorems goalFact
+  -- Optionally enable Haskell JSON-lines diagnostics via HASKELL_DIAG_PATH
+  mdiag <- lookupEnv "HASKELL_DIAG_PATH"
+  let env' = case mdiag of
+               Nothing -> env
+               Just p  -> env { peDiagnosticJsonPath = Just p }
   
-  facts <- evalProofM getFacts env
+  facts <- evalProofM getFacts env'
   putStrLn "Initial facts:"
   mapM_ (putStrLn . ("  " ++) . formatFact) facts
   putStrLn ""
@@ -143,7 +149,7 @@ main = do
   mapM_ (putStrLn . ("  - " ++) . hyperTheoremName) hyperTheorems
   
   putStrLn "Beginning automated proof search. I will attempt to derive a contradiction from the assumption that G is simple."
-  (success, finalEnv) <- runProofM (enhancedAutoSolve hyperTheorems 400) env
+  (success, finalEnv) <- runProofM (enhancedAutoSolve hyperTheorems 400) env'
   
   if success
     then do
