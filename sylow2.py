@@ -172,7 +172,6 @@ def sylow_killable(n: int) -> bool:
     return False
 
 
-
 # print(divisors(12))
 # print out the "interesting" group orders
 
