@@ -346,16 +346,36 @@ orderDividesAlt = Theorem "OrderMustDivideAlt" (Template [ mkFact "embedInAlt" [
 -- available theorem names visible in the Haskell engine. Replace with
 -- real implementations when porting the corresponding Python rules.
 
+-- Helper for creating no-op stubs where no Haskell implementation exists yet
 mkStub :: String -> Theorem
 mkStub nm = Theorem nm (Template []) (const [])
 
+-- For theorems that already have Haskell implementations under different
+-- identifiers, create lightweight aliases that reuse the existing
+-- Theorem value but expose the Python name as tName. This maintains
+-- behavior while making parity explicit.
+
+aliasWithName :: String -> Theorem -> Theorem
+aliasWithName newName (Theorem _ tpl f) = Theorem newName tpl f
+
+-- Aliases for existing Haskell theorems
+th_sylow :: Theorem; th_sylow = aliasWithName "sylow" sylowTheorem
+th_embed_An :: Theorem; th_embed_An = aliasWithName "embed_An" embedIntoAn
+
+-- UniqueSylowImpliesNotSimple corresponds to several Python names; expose
+-- them as aliases pointing to the same implementation so Python-name-based
+-- lookups work.
+th_not_simple :: Theorem; th_not_simple = aliasWithName "not_simple" uniqueSylowContradiction
+th_simple_not_simple :: Theorem; th_simple_not_simple = aliasWithName "simple_not_simple" uniqueSylowContradiction
+th_single_sylow_not_simple :: Theorem; th_single_sylow_not_simple = aliasWithName "single_sylow_normal" uniqueSylowContradiction
+
+-- Remaining stubs (no Haskell implementation yet)
 th_alternating_order :: Theorem; th_alternating_order = mkStub "alternating_order"
 th_alternating_simple :: Theorem; th_alternating_simple = mkStub "alternating_simple"
 th_coset_action :: Theorem; th_coset_action = mkStub "coset_action"
 th_count_order_pk_elements :: Theorem; th_count_order_pk_elements = mkStub "count_order_pk_elements"
 th_counting_cont :: Theorem; th_counting_cont = mkStub "counting_cont"
 th_divides_contradiction :: Theorem; th_divides_contradiction = mkStub "divides_contradiction"
-th_embed_An :: Theorem; th_embed_An = mkStub "embed_An"
 th_intersection_of_sylows :: Theorem; th_intersection_of_sylows = mkStub "intersection_of_sylows"
 th_lagrange :: Theorem; th_lagrange = mkStub "lagrange"
 th_multi_sylow_single_sylow_cont :: Theorem; th_multi_sylow_single_sylow_cont = mkStub "multi_sylow_single_sylow_cont"
@@ -363,15 +383,12 @@ th_multiple_sylows :: Theorem; th_multiple_sylows = mkStub "multiple_sylows"
 th_normal_subgroup_to_not_simple :: Theorem; th_normal_subgroup_to_not_simple = mkStub "normal_subgroup_to_not_simple"
 th_normalizer_everything_implies_normal :: Theorem; th_normalizer_everything_implies_normal = mkStub "normalizer_everything_implies_normal"
 th_normalizer_sylow_intersection :: Theorem; th_normalizer_sylow_intersection = mkStub "normalizer_sylow_intersection"
-th_not_simple :: Theorem; th_not_simple = mkStub "not_simple"
 th_possible_max_intersections :: Theorem; th_possible_max_intersections = mkStub "possible_max_intersections"
 th_rule_out_max_intersections :: Theorem; th_rule_out_max_intersections = mkStub "rule_out_max_intersections"
 th_rule_out_normalizer_of_intersection_order :: Theorem; th_rule_out_normalizer_of_intersection_order = mkStub "rule_out_normalizer_of_intersection_order"
 th_simple_group_action :: Theorem; th_simple_group_action = mkStub "simple_group_action"
-th_simple_not_simple :: Theorem; th_simple_not_simple = mkStub "simple_not_simple"
 th_subgroup_index :: Theorem; th_subgroup_index = mkStub "subgroup_index"
 th_subgroup_trans :: Theorem; th_subgroup_trans = mkStub "subgroup_trans"
-th_sylow :: Theorem; th_sylow = mkStub "sylow"
 
 
 --------------------------------------------------------------------------------
