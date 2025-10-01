@@ -114,9 +114,7 @@ def auto_solve(pf_envir):
     for thm in pf_envir.theorems:
         thm_matches[thm] = match_facts_to_theorem(thm.facts, pf_envir.facts)
 
-    for i in range(0, MAX_ITERATIONS):
-
-        print("iteration: ", i)
+    for _ in range(0, MAX_ITERATIONS):
         # pick one of the matches according to some procedure
         # "breadth-first" approach
         # should remove things once they're already applied
@@ -161,7 +159,6 @@ def auto_solve(pf_envir):
             )
 
         if pf_envir.goal_achieved:
-            #           print("DONE!")
             pf_envir.print_relevant_facts()
             print("SUCCESS")
             return True
@@ -352,7 +349,9 @@ def rule_single_sylow_not_simple(facts):
     return conclusions
 
 
-single_sylow_not_simple = HyperTheorem(in_facts, rule_single_sylow_not_simple, "single_sylow_normal")
+single_sylow_not_simple = HyperTheorem(
+    in_facts, rule_single_sylow_not_simple, "single_sylow_normal"
+)
 
 # simple + not_simple = false
 in_facts = [Fact("simple", ["G"]), Fact("not_simple", ["G"])]
@@ -420,7 +419,9 @@ def rule_divides_contradiction(facts):
     return conclusions
 
 
-divides_contradiction = HyperTheorem(in_facts, rule_divides_contradiction, "divides_contradiction")
+divides_contradiction = HyperTheorem(
+    in_facts, rule_divides_contradiction, "divides_contradiction"
+)
 
 # an alternating group of order n > 5 is simple
 in_facts = [alternating_group("A", "n")]
@@ -438,7 +439,9 @@ def rule_alternating_simple(facts):
     return conclusions
 
 
-alternating_simple = HyperTheorem(in_facts, rule_alternating_simple, "alternating_simple")
+alternating_simple = HyperTheorem(
+    in_facts, rule_alternating_simple, "alternating_simple"
+)
 
 # index of a subgroup
 in_facts = [subgroup("H", "G"), order("H", "m"), order("G", "n")]
@@ -501,7 +504,9 @@ def rule_count_order_pk_elements(facts):
     return conclusions
 
 
-count_order_pk_elements = HyperTheorem(in_facts, rule_count_order_pk_elements, "count_order_pk_elements")
+count_order_pk_elements = HyperTheorem(
+    in_facts, rule_count_order_pk_elements, "count_order_pk_elements"
+)
 
 # getting a contradiction by counting
 # really should be varargs
@@ -529,7 +534,9 @@ def rule_counting_contradiction(facts):
         return conclusions
 
 
-counting_contradiction = HyperTheorem(in_facts, rule_counting_contradiction, "counting_contradiction")
+counting_contradiction = HyperTheorem(
+    in_facts, rule_counting_contradiction, "counting_contradiction"
+)
 
 ########################### NORMALIZER OF INTERSECTION #########################
 
@@ -567,7 +574,9 @@ def rule_possible_max_intersections(facts):
     return [Disjunction(intersection_facts)]
 
 
-possible_max_intersections = HyperTheorem(in_facts, rule_possible_max_intersections, "possible_max_intersections")
+possible_max_intersections = HyperTheorem(
+    in_facts, rule_possible_max_intersections, "possible_max_intersections"
+)
 
 # If p^k is the maximum sylow intersection, then there are two sylow p-subgroups
 # intersecting in a subgroup of size p^k
@@ -674,7 +683,9 @@ def rule_rule_out_max_intersections(facts):
     return conclusions
 
 
-rule_out_max_intersections = HyperTheorem(in_facts, rule_rule_out_max_intersections, "rule_out_max_intersections")
+rule_out_max_intersections = HyperTheorem(
+    in_facts, rule_rule_out_max_intersections, "rule_out_max_intersections"
+)
 
 in_facts = [normalizer_of_sylow_intersection("p", "G", "T"), order("T", "k")]
 
@@ -688,12 +699,13 @@ def rule_rule_out_normalizer_of_intersection_order(facts):
     n_p_list = sylow2.num_sylow(p, k)
     if len(n_p_list) == 1:  # sylow p-subgroup of T forced to be normal
         conclusions.append(false())
-        print("p: ", p, " :: k: ", k)
     return conclusions
 
 
 rule_out_normalizer_of_intersection_order = HyperTheorem(
-    in_facts, rule_rule_out_normalizer_of_intersection_order, "rule_out_normalizer_of_intersection_order"
+    in_facts,
+    rule_rule_out_normalizer_of_intersection_order,
+    "rule_out_normalizer_of_intersection_order",
 )
 
 # in_facts = [order('G', 'n')]
@@ -794,7 +806,6 @@ def test1():
 
 def test2():
 
-
     fact1 = Fact("group", ["G"])
     fact2 = Fact("order", ["G", "6"])
     fact3 = Fact("simple", ["G"])
@@ -813,6 +824,7 @@ def test2():
 def matching_test():
     def foo(first, second, third):
         return Fact("foo", [first, second, third])
+
     def _bar(a, b, c):
         return Fact("bar", [a, b, c])
 
@@ -823,11 +835,10 @@ def matching_test():
 
     matches = match_facts_to_theorem(thm_facts, facts, [foo("A", "B", "C")])
 
-    print("in matching_test")
+    # matching_test: intentionally quiet; use fact.do_print() in a debugger if needed
     for match in matches:
         for fact in match:
             fact.do_print()
-        print(" ")
 
 
 #   matches,dicts = match_facts_to_template(template, facts)

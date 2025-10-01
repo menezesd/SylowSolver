@@ -59,7 +59,7 @@ class ProofEnvironment:
         for f in disj.facts:
             try:
                 args = ",".join(map(str, f.args))
-            except Exception:
+            except (TypeError, AttributeError):
                 args = ""
             sigs.append(f.name + ":" + args)
         sigs.sort()
@@ -70,20 +70,20 @@ class ProofEnvironment:
         # produced by different contexts differ).
         prov = []
         try:
-            thm = getattr(disj, 'conc_thm', None)
+            thm = getattr(disj, "conc_thm", None)
             if thm is not None:
                 # thm may be an object or a string; handle both
-                thm_name = getattr(thm, 'name', None) or str(thm)
-                prov.append('thm:' + thm_name)
-        except Exception:
+                thm_name = getattr(thm, "name", None) or str(thm)
+                prov.append("thm:" + thm_name)
+        except AttributeError:
             pass
         try:
-            anc = getattr(disj, 'dis_ancestors', None)
+            anc = getattr(disj, "dis_ancestors", None)
             if anc:
                 # anc is a set of (label,idx) tuples
                 anc_labels = sorted({a for (a, _) in anc})
-                prov.append('anc:' + ','.join(map(str, anc_labels)))
-        except Exception:
+                prov.append("anc:" + ",".join(map(str, anc_labels)))
+        except AttributeError:
             pass
 
         if prov:
@@ -114,10 +114,10 @@ class ProofEnvironment:
             # the existing entry isn't a Disjunction or signatures differ,
             # continue probing.
             try:
-                if hasattr(existing, 'facts'):
+                if hasattr(existing, "facts"):
                     if self._canonical_disjunction_signature(existing) == canon:
                         return label
-            except Exception:
+            except AttributeError:
                 pass
             probe += 1
             label = prefix + str((num + probe) % 1000000)
@@ -146,15 +146,8 @@ class ProofEnvironment:
 
         frozen_dis_combos = set(frozenset(d) for d in self.goal_dis_combos)
 
-        # Debug prints to mirror Haskell's instrumentation. Also support
-        # structured JSON-lines diagnostics when self.diagnostic_json_path
-        # is set.
-        try:
-            print("DEBUG update_goal_achieved: goal_dis_combos =", self.goal_dis_combos)
-            print("DEBUG disjunctionSizes =", L)
-            print("DEBUG allPossibleCombos count =", len(S))
-        except Exception:
-            pass
+        # When requested, write structured JSON-lines diagnostics instead of
+        # printing large DEBUG blobs to stdout.
 
         # For richer diagnostics: for each full assignment, list which observed
         # goal combos cover it, and for each covering observed combo list the
@@ -174,7 +167,7 @@ class ProofEnvironment:
             import json
 
             try:
-                with open(self.diagnostic_json_path, "a") as fh:
+                with open(self.diagnostic_json_path, "a", encoding="utf-8") as fh:
                     # Build disjunction signatures: for each D label include
                     # a list of alternative fact signatures (name, args) and
                     # the canonical signature string used to derive the D label.
@@ -182,7 +175,7 @@ class ProofEnvironment:
                     # and disjunction ancestors) and is useful for label-agnostic
                     # comparison between Python and Haskell runs.
                     disjunction_signatures = []
-                    for (D, l) in L:
+                    for D, l in L:
                         sigs = []
                         canon = None
                         if D in self.fact_labels:
@@ -190,14 +183,14 @@ class ProofEnvironment:
                             for f in self.fact_labels[D].facts:
                                 try:
                                     sigs.append((f.name, list(f.args)))
-                                except Exception:
+                                except (AttributeError, TypeError):
                                     sigs.append((f.name, []))
                             # also compute canonical signature string from the
                             # Disjunction object so downstream tools can match on it
                             try:
                                 disj_obj = self.fact_labels[D]
                                 canon = self._canonical_disjunction_signature(disj_obj)
-                            except Exception:
+                            except (KeyError, AttributeError, TypeError):
                                 canon = None
                         disjunction_signatures.append([D, sigs, canon])
 
@@ -206,10 +199,16 @@ class ProofEnvironment:
                     # JSON representation so order does not depend on discovery timing.
                     goal_combos_sorted = [sorted(list(d)) for d in frozen_dis_combos]
                     try:
-                        goal_combos_sorted = sorted(goal_combos_sorted, key=lambda x: json.dumps(x))
-                    except Exception:
-                        goal_combos_sorted = goal_combos_sorted
-                    header = {"goal_dis_combos": goal_combos_sorted, "disjunctionSizes": L, "disjunctionSignatures": disjunction_signatures, "allPossibleCombos": len(S)}
+                        goal_combos_sorted = sorted(goal_combos_sorted, key=json.dumps)
+                    except (TypeError, ValueError):
+                        # If sorting fails, leave the list in its current order.
+                        pass
+                    header = {
+                        "goal_dis_combos": goal_combos_sorted,
+                        "disjunctionSizes": L,
+                        "disjunctionSignatures": disjunction_signatures,
+                        "allPossibleCombos": len(S),
+                    }
                     fh.write(json.dumps({"type": "header", "data": header}) + "\n")
                     for idx, (full_combo, covered_by) in enumerate(combo_coverings):
                         entry = {
@@ -220,15 +219,20 @@ class ProofEnvironment:
                         # collect producers for each covering observed combo
                         for cov in covered_by:
                             producers = []
-                            for (dlabel, i) in cov:
-                                if dlabel in self.fact_labels and i < len(self.fact_labels[dlabel].facts):
+                            for dlabel, i in cov:
+                                if dlabel in self.fact_labels and i < len(
+                                    self.fact_labels[dlabel].facts
+                                ):
                                     f = self.fact_labels[dlabel].facts[i]
                                     producers.append((f.name, tuple(f.args)))
                                 else:
                                     producers.append((None, None))
                             entry["producers"].append(producers)
-                        fh.write(json.dumps({"type": "combo", "index": idx, "data": entry}) + "\n")
-            except Exception:
+                        fh.write(
+                            json.dumps({"type": "combo", "index": idx, "data": entry})
+                            + "\n"
+                        )
+            except (OSError, IOError, TypeError):
                 # Fall back to stdout prints if file write fails
                 pass
         else:
@@ -237,19 +241,21 @@ class ProofEnvironment:
                 for idx, (full_combo, covered_by) in enumerate(combo_coverings):
                     if idx >= 200:
                         break
-                    print(f"DEBUG fullCombo #{idx}: {sorted(list(full_combo))}")
-                    print(f"DEBUG coveredBy: { [sorted(list(x)) for x in covered_by] }")
+                    print(f"fullCombo #{idx}: {sorted(list(full_combo))}")
+                    print(f"coveredBy: { [sorted(list(x)) for x in covered_by] }")
                     # For each covering observed combo, print its producers (fact label -> (name,args))
                     for cov in covered_by:
                         producers = []
-                        for (dlabel, i) in cov:
-                            if dlabel in self.fact_labels and i < len(self.fact_labels[dlabel].facts):
+                        for dlabel, i in cov:
+                            if dlabel in self.fact_labels and i < len(
+                                self.fact_labels[dlabel].facts
+                            ):
                                 f = self.fact_labels[dlabel].facts[i]
                                 producers.append((dlabel, f.name, tuple(f.args)))
                             else:
                                 producers.append((dlabel, None, None))
-                        print(f"DEBUG producers for {sorted(list(cov))} -> {producers}")
-            except Exception:
+                        print(f"producers for {sorted(list(cov))} -> {producers}")
+            except OSError:
                 pass
 
         # Now decide if all full combos are covered
@@ -278,22 +284,22 @@ class ProofEnvironment:
 
                 self.facts.append(fact)
                 if fact.equals(self.goal):
-                        self.goal_dis_combos.append(fact.dis_ancestors)
-                        # Print signature-mapped ancestors for parity with Haskell
-                        try:
-                            sigs = []
-                            for (dlabel, idx) in fact.dis_ancestors:
-                                if dlabel in self.fact_labels and idx < len(self.fact_labels[dlabel].facts):
-                                    f = self.fact_labels[dlabel].facts[idx]
-                                    sigs.append(((dlabel, idx), (f.name, tuple(f.args))))
-                                else:
-                                    sigs.append(((dlabel, idx), None))
-                            print("DEBUG add_new_facts: recording goal combo from {} -> {}".format(new_label, fact.dis_ancestors))
-                            print("DEBUG add_new_facts: signature-mapped ancestors: {}".format(sigs))
-                        except Exception:
-                            pass
-                        self.update_goal_achieved(fact)
-                        self.update_useful(fact)
+                    self.goal_dis_combos.append(fact.dis_ancestors)
+                    # Print signature-mapped ancestors for parity with Haskell
+                    try:
+                        sigs = []
+                        for dlabel, idx in fact.dis_ancestors:
+                            if dlabel in self.fact_labels and idx < len(
+                                self.fact_labels[dlabel].facts
+                            ):
+                                f = self.fact_labels[dlabel].facts[idx]
+                                sigs.append(((dlabel, idx), (f.name, tuple(f.args))))
+                            else:
+                                sigs.append(((dlabel, idx), None))
+                    except (KeyError, IndexError, AttributeError):
+                        sigs = []
+                    self.update_goal_achieved(fact)
+                    self.update_useful(fact)
 
             if isinstance(fact, Disjunction):
                 # Use deterministic disjunction labels derived from canonical signature
