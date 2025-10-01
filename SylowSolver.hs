@@ -340,12 +340,75 @@ orderDividesAlt = Theorem "OrderMustDivideAlt" (Template [ mkFact "embedInAlt" [
       _ -> [])
 
 --------------------------------------------------------------------------------
+-- Python theorem stubs (placeholders to ease incremental porting)
+-- These are intentionally no-op: they provide a named Theorem with an
+-- empty template so they don't affect proof search but make the set of
+-- available theorem names visible in the Haskell engine. Replace with
+-- real implementations when porting the corresponding Python rules.
+
+mkStub :: String -> Theorem
+mkStub nm = Theorem nm (Template []) (const [])
+
+th_alternating_order :: Theorem; th_alternating_order = mkStub "alternating_order"
+th_alternating_simple :: Theorem; th_alternating_simple = mkStub "alternating_simple"
+th_coset_action :: Theorem; th_coset_action = mkStub "coset_action"
+th_count_order_pk_elements :: Theorem; th_count_order_pk_elements = mkStub "count_order_pk_elements"
+th_counting_cont :: Theorem; th_counting_cont = mkStub "counting_cont"
+th_divides_contradiction :: Theorem; th_divides_contradiction = mkStub "divides_contradiction"
+th_embed_An :: Theorem; th_embed_An = mkStub "embed_An"
+th_intersection_of_sylows :: Theorem; th_intersection_of_sylows = mkStub "intersection_of_sylows"
+th_lagrange :: Theorem; th_lagrange = mkStub "lagrange"
+th_multi_sylow_single_sylow_cont :: Theorem; th_multi_sylow_single_sylow_cont = mkStub "multi_sylow_single_sylow_cont"
+th_multiple_sylows :: Theorem; th_multiple_sylows = mkStub "multiple_sylows"
+th_normal_subgroup_to_not_simple :: Theorem; th_normal_subgroup_to_not_simple = mkStub "normal_subgroup_to_not_simple"
+th_normalizer_everything_implies_normal :: Theorem; th_normalizer_everything_implies_normal = mkStub "normalizer_everything_implies_normal"
+th_normalizer_sylow_intersection :: Theorem; th_normalizer_sylow_intersection = mkStub "normalizer_sylow_intersection"
+th_not_simple :: Theorem; th_not_simple = mkStub "not_simple"
+th_possible_max_intersections :: Theorem; th_possible_max_intersections = mkStub "possible_max_intersections"
+th_rule_out_max_intersections :: Theorem; th_rule_out_max_intersections = mkStub "rule_out_max_intersections"
+th_rule_out_normalizer_of_intersection_order :: Theorem; th_rule_out_normalizer_of_intersection_order = mkStub "rule_out_normalizer_of_intersection_order"
+th_simple_group_action :: Theorem; th_simple_group_action = mkStub "simple_group_action"
+th_simple_not_simple :: Theorem; th_simple_not_simple = mkStub "simple_not_simple"
+th_subgroup_index :: Theorem; th_subgroup_index = mkStub "subgroup_index"
+th_subgroup_trans :: Theorem; th_subgroup_trans = mkStub "subgroup_trans"
+th_sylow :: Theorem; th_sylow = mkStub "sylow"
+
+
+--------------------------------------------------------------------------------
 -- Proof engine
 --------------------------------------------------------------------------------
 
 data Engine = Engine { thms :: [Theorem], maxRounds :: Int, maxCaseSplit :: Int }
 defaultEngine :: Engine
-defaultEngine = Engine [ sylowTheorem, uniqueSylowContradiction, embedIntoAn, orderDividesAlt ] 50 12
+defaultEngine = Engine [ sylowTheorem
+                       , uniqueSylowContradiction
+                       , embedIntoAn
+                       , orderDividesAlt
+                       -- Python parity stubs (to be implemented)
+                       , th_alternating_order
+                       , th_alternating_simple
+                       , th_coset_action
+                       , th_count_order_pk_elements
+                       , th_counting_cont
+                       , th_divides_contradiction
+                       , th_embed_An
+                       , th_intersection_of_sylows
+                       , th_lagrange
+                       , th_multi_sylow_single_sylow_cont
+                       , th_multiple_sylows
+                       , th_normal_subgroup_to_not_simple
+                       , th_normalizer_everything_implies_normal
+                       , th_normalizer_sylow_intersection
+                       , th_not_simple
+                       , th_possible_max_intersections
+                       , th_rule_out_max_intersections
+                       , th_rule_out_normalizer_of_intersection_order
+                       , th_simple_group_action
+                       , th_simple_not_simple
+                       , th_subgroup_index
+                       , th_subgroup_trans
+                       , th_sylow
+                       ] 50 12
 
 -- Note: `stepRound` and its helpers are now implemented inside `runProver` using the RWS-based ProverM.
 
