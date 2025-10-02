@@ -32,7 +32,7 @@ insertDisj disj@Disj{..} env0 = (env', taggedAlternatives)
             Just prov@ProvTheorem{..} -> 
               Just prov { fromDisj = Just (dId, ix) }
             other -> other
-          newDeps = S.unions [fDeps alternative, dDeps, S.singleton (dId, ix)]
+          newDeps = S.unions [fDeps alternative, dDeps, S.singleton (mkDep dId ix)]
       in alternative { fDeps = newDeps, fProv = altProvenance }
     
     taggedAlternatives = zipWith tagAlternative [0..] dAlts
@@ -125,8 +125,8 @@ stepRoundM = do
           
           tryApplyTheorem Theorem{..} tuple = 
             case matchTemplate tuple tTemplate of
-              Nothing -> []
-              Just substitution ->
+              Left _ -> []
+              Right substitution ->
                 let concreteTuple = map (substFact substitution) tuple
                     parentDeps = S.unions (map fDeps concreteTuple)
                     outputs = tApply concreteTuple
@@ -162,8 +162,8 @@ applyTheoremOutput (theoremName, output, parentDeps, parents, substitution) =
     TODisj alternatives -> do
       materializedAlts <- materializeWildcardsM alternatives
       env <- get
-      let label = Just $ theoremName ++ "(" ++ intercalate ", " 
-                    (map (\f -> fName f ++ show (fArgs f)) parents) ++ ")"
+      let canonAlt f = fName f ++ "(" ++ intercalate "," (fArgs f) ++ ")"
+          label = Just $ "{" ++ intercalate " | " (map canonAlt materializedAlts) ++ "}"
           disj = Disj 
             { dId = eNextDid env
             , dAlts = materializedAlts

@@ -15,37 +15,46 @@ isWildcard ('?':_) = True
 isWildcard _ = False
 
 -- Template matching with error handling
-matchTemplate :: [Fact] -> Template -> ProverResult Subst
-matchTemplate facts (Template patterns)
-  | length facts /= length patterns = 
+matchTemplate :: [Fact] -> TTemplate -> ProverResult Subst
+matchTemplate facts (TTemplate patterns)
+  | length facts /= length patterns =
       Left $ MatchError $ "Fact count mismatch: " ++ show (length facts) ++ " vs " ++ show (length patterns)
-  | otherwise = matchFactList M.empty (zip facts patterns)
+  | otherwise =
+      -- Parse incoming facts' args into typed Values (best-effort)
+      let parseArg s = case parseValue s of
+                         Just v -> v
+                         Nothing -> case readInt s of
+                                      Just n -> Nat n
+                                      Nothing -> Sym s
+          parseFact (Fact nm args deps prov) = (nm, map parseArg args, deps, prov)
+          typedFacts = map parseFact facts
+      in matchTyped M.empty (zip typedFacts patterns)
   where
-    matchFactList :: Subst -> [(Fact, Fact)] -> ProverResult Subst
-    matchFactList sigma [] = Right sigma
-    matchFactList sigma ((fact, pattern) : rest)
-      | fName fact /= fName pattern = 
-          Left $ MatchError $ "Name mismatch: " ++ fName fact ++ " vs " ++ fName pattern
-      | length (fArgs fact) /= length (fArgs pattern) = 
-          Left $ MatchError $ "Arity mismatch for " ++ fName fact
+    -- Match a list of facts against typed patterns, producing a substitution on variables
+    -- Subst maps variable names to their concrete string encodings (renderValue)
+    matchTyped :: Subst -> [((String,[Value],a,b), TPattern)] -> ProverResult Subst
+    matchTyped sigma [] = Right sigma
+    matchTyped sigma (((fn, fvs, _, _), TPattern pn pargs):rest)
+      | fn /= pn = Left $ MatchError $ "Name mismatch: " ++ fn ++ " vs " ++ pn
+      | length fvs /= length pargs = Left $ MatchError $ "Arity mismatch for " ++ fn
       | otherwise = do
-          sigma' <- matchArguments sigma (zip (fArgs fact) (fArgs pattern))
-          matchFactList sigma' rest
+          sigma' <- matchArgs sigma (zip fvs pargs)
+          matchTyped sigma' rest
 
-    matchArguments :: Subst -> [(String, String)] -> ProverResult Subst
-    matchArguments sigma [] = Right sigma
-    matchArguments sigma ((arg, patternArg) : rest)
-      | isFixed patternArg = 
-          if arg == drop 1 patternArg 
-          then matchArguments sigma rest
-          else Left $ MatchError $ "Fixed argument mismatch: " ++ arg ++ " vs " ++ patternArg
-      | isWildcard patternArg = matchArguments sigma rest -- Skip wildcards
-      | otherwise = case M.lookup patternArg sigma of
-          Nothing -> matchArguments (M.insert patternArg arg sigma) rest
-          Just existingArg 
-            | existingArg == arg -> matchArguments sigma rest
-            | otherwise -> Left $ SubstitutionError 
-                ("Conflicting substitution for " ++ patternArg ++ ": " ++ existingArg ++ " vs " ++ arg) sigma
+    matchArgs :: Subst -> [(Value, ValuePat)] -> ProverResult Subst
+    matchArgs sigma [] = Right sigma
+    matchArgs sigma ((val, pat):rest) = case pat of
+      VWildcard -> matchArgs sigma rest
+      VFixed vfixed ->
+        if val == vfixed
+          then matchArgs sigma rest
+          else Left $ MatchError $ "Fixed argument mismatch"
+      VVar name -> case M.lookup name sigma of
+        Nothing -> matchArgs (M.insert name (renderValue val) sigma) rest
+        Just existing ->
+          if existing == renderValue val
+            then matchArgs sigma rest
+            else Left $ SubstitutionError ("Conflicting substitution for " ++ name) sigma
 
 -- Apply substitution to a fact
 substFact :: Subst -> Fact -> Fact

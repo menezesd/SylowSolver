@@ -8,18 +8,19 @@ import Control.Monad.Except
 import Control.Monad (foldM, when)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.Maybe (fromMaybe)
+-- import Data.Maybe (fromMaybe)
 import Data.List (intercalate)
 
 import Types
 import Errors  
 import Matching
 -- | Generate candidate tuples that match pattern fact names (prunes search drastically)
-generateTuplesForTemplate :: [Fact] -> Template -> [[Fact]]
-generateTuplesForTemplate facts (Template patterns) =
-  sequence [ filter (\f -> fName f == fName pat && length (fArgs f) == length (fArgs pat)) facts
-           | pat <- patterns
-           ]
+generateTuplesForTemplate :: [Fact] -> TTemplate -> [[Fact]]
+generateTuplesForTemplate facts (TTemplate patterns) =
+  let arities = [ (tpName p, length (tpArgs p)) | p <- patterns ]
+  in sequence [ filter (\f -> fName f == nm && length (fArgs f) == ar) facts
+              | (nm, ar) <- arities
+              ]
 
 -- | Helper to lift ProverResult into ProverM
 liftError :: ProverResult a -> ProverM a
@@ -61,7 +62,7 @@ insertDisj disj@Disj{..} = do
               Just prov@ProvTheorem{..} -> 
                 Just prov { fromDisj = Just (dId, ix) }
               other -> other
-            newDeps = S.unions [fDeps alternative, dDeps, S.singleton (dId, ix)]
+            newDeps = S.unions [fDeps alternative, dDeps, S.singleton (mkDep dId ix)]
         return alternative { fDeps = newDeps, fProv = altProvenance }
   
   taggedAlts <- mapM (uncurry tagAlternative) (zip [0..] dAlts)
@@ -128,8 +129,8 @@ processTheoremOutput theoremName output parentDeps parents substitution = do
     TODisj alternatives -> do
       materializedAlts <- materializeWildcards alternatives
       env <- get
-      let label = Just $ theoremName ++ "(" ++ intercalate ", " 
-                    (map (\f -> fName f ++ show (fArgs f)) parents) ++ ")"
+      let canonAlt f = fName f ++ "(" ++ intercalate "," (fArgs f) ++ ")"
+          label = Just $ "{" ++ intercalate " | " (map canonAlt materializedAlts) ++ "}"
           disj = Disj 
             { dId = eNextDid env
             , dAlts = materializedAlts
@@ -210,7 +211,7 @@ checkGoalProven goalFact = do
     then return False
     else do
       let allDeps = S.unions (map fDeps instances)
-          disjIds = S.toList (S.map fst allDeps)
+          disjIds = S.toList (S.map depDisjInt allDeps)
           arities = [(did, length (case M.lookup did eDisjs of
                                      Just disj -> dAlts disj
                                      Nothing -> [])) 
@@ -230,8 +231,8 @@ checkGoalProven goalFact = do
                   disjIdsList = map fst arities
                   ok assignment = 
                     let assignSet = S.fromList (zip disjIdsList assignment)
-                    in any (\inst -> fDeps inst `S.isSubsetOf` 
-                            S.fromList [(did, idx) | (did, idx) <- S.toList assignSet]) instances
+                        asDeps = S.fromList [ mkDep did idx | (did, idx) <- S.toList assignSet ]
+                    in any (\inst -> fDeps inst `S.isSubsetOf` asDeps) instances
               return $ not (null assignments) && all ok assignments
 
 -- Helper function for cartesian product  

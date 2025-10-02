@@ -13,6 +13,8 @@ import PureProver
 import Theorems
 import Streaming
 import ProofPrinter
+import System.Environment (lookupEnv)
+import DebugLog (setDebugEnabled)
 
 -- | Configuration for the solver
 data SolverConfig = SolverConfig
@@ -41,6 +43,10 @@ goalFalse = Fact "false" [] S.empty Nothing
 runProofAttempt :: SolverConfig -> Integer -> IO ()
 runProofAttempt config@SolverConfig{..} n = do
   putStrLn $ "Attempting: no simple group of order " ++ show n
+  -- Enable debug logging if verbose or env var SYLOW_DEBUG=true
+  envDbg <- lookupEnv "SYLOW_DEBUG"
+  let dbg = verbose || (envDbg == Just "true")
+  setDebugEnabled dbg
   
   let hypotheses = createHypotheses n
       goal = goalFalse
@@ -123,6 +129,9 @@ main :: IO ()
 main = do
   args <- getArgs
   let (config, maybeTarget) = parseArgs args
+  -- Initialize debug flag from env (CLI overrides)
+  envDbg <- lookupEnv "SYLOW_DEBUG"
+  setDebugEnabled (verbose config || envDbg == Just "true")
   
   case maybeTarget of
     Just n -> runProofAttempt config n

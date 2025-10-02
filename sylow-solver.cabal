@@ -23,7 +23,8 @@ executable sylow-solver
         PureProver,
         Streaming,
         SylowIO,
-        ProofPrinter
+        ProofPrinter,
+        DebugLog
     build-depends:
         base >= 4.12 && < 5,
         containers >= 0.6 && < 0.8,

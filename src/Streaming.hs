@@ -7,7 +7,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Except
 import Control.Monad (mapM)
 import qualified Data.Set as S
-import Data.List (unfoldr)
+-- import Data.List (unfoldr)
 
 import Types
 import Errors
@@ -77,10 +77,11 @@ streamSingleTheorem StreamConfig{..} facts theorem@Theorem{..} =
           in Right [(tName, output, parentDeps, tuple, substitution) | output <- outputs]
         Left _ -> Left []
       
-      successfulApplications = concat [results | tuple <- candidateTuples,
-                                                 let res = tryApply tuple,
-                                                 case res of { Right _ -> True; Left _ -> False },
-                                                 let Right results = res]
+      successfulApplications = concat [ results
+                                      | tuple <- candidateTuples
+                                      , let res = tryApply tuple
+                                      , case res of { Right _ -> True; Left _ -> False }
+                                      , let Right results = res ]
   in successfulApplications
 
 -- | Chunked processing for memory efficiency
@@ -145,7 +146,7 @@ boundedDFS maxDepth theorems = searchDFS maxDepth
         else tryTheorems thms facts
     
     tryApplyTheorem theorem@Theorem{..} facts = do
-      let Template patterns = tTemplate
+      let TTemplate patterns = tTemplate
           tupleSize = length patterns
           -- Generate tuples lazily using orderedTuples from PureProver  
           tuples = orderedTuples tupleSize facts

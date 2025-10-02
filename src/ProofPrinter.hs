@@ -152,7 +152,7 @@ printProofWithCases env goal = do
 estimateCombos :: Env -> [Fact] -> (Int, Int)
 estimateCombos Env{..} instances =
   let allDeps = S.unions (map fDeps instances)
-      disjIds = S.toList (S.map fst allDeps)
+      disjIds = S.toList (S.map depDisjInt allDeps)
       arities = [ length (case M.lookup did eDisjs of
                              Just disj -> dAlts disj
                              Nothing -> [])
@@ -165,10 +165,11 @@ pickBestContradiction :: Env -> [Fact] -> Maybe (Fact, S.Set Dep, [String])
 pickBestContradiction env instances =
   let withDeps = [(f, fDeps f) | f <- instances]
       -- Heuristic: prefer proofs that mention embedding/alternating, then fewer disjunctions, then smaller depth
+      hasEmbed :: Fact -> Int
       hasEmbed t =
         let node = buildProofTreeMemo env t 10
             mentionsEmbeds = containsName node (\n -> n == "embedsInSym" || n == "alternatingGroup")
-        in if mentionsEmbeds then 0 else 1  -- lower is better
+        in if mentionsEmbeds then (0 :: Int) else (1 :: Int)  -- lower is better
       containsName (ProofNode (Fact nm _ _ _) _ parents _) p =
         p nm || any (\ch -> containsName ch p) parents
       scored = [ (f, deps, hasEmbed f, S.size deps, pnDepth (buildProofTreeMemo env f 10))
@@ -186,7 +187,9 @@ depsToLabels Env{..} deps =
   [ case M.lookup did eDisjs of
       Just disj | idx < length (dAlts disj) -> prettyFact (dAlts disj !! idx)
       _ -> "case_" ++ show idx
-  | (did, idx) <- deps]
+  | d <- deps
+  , let did = depDisjInt d
+  , let idx = depAltInt d]
 
 -- | Utility: sort a list by a comparator, safely returning [] on empty
 sortByMaybe :: (a -> a -> Ordering) -> [a] -> [a]
@@ -204,7 +207,7 @@ sortByMaybe cmp xs =
 printCaseAnalysis :: Env -> [Fact] -> IO ()
 printCaseAnalysis env@Env{..} instances = do
   let allDeps = S.unions (map fDeps instances)
-      disjIdsRaw = S.toList (S.map fst allDeps)
+      disjIdsRaw = S.toList (S.map depDisjInt allDeps)
       disjIds = sort (dedupDisjunctions env disjIdsRaw)
       arities = [(did, length (case M.lookup did eDisjs of
                                  Just disj -> dAlts disj
@@ -242,19 +245,22 @@ printCaseResolution :: Env -> [Int] -> (Int, [Int]) -> IO ()
 printCaseResolution Env{..} disjIds (caseNum, assignment) = do
   let assignSet = S.fromList (zip disjIds assignment)
       caseLabels = [getCaseLabel did idx | (did, idx) <- zip disjIds assignment]
+      asDeps = S.fromList [ mkDep did idx | (did, idx) <- S.toList assignSet]
       validFacts = [f | f <- sortOn (\f -> (fName f, fArgs f)) (S.toList eFacts), 
-                       fDeps f `S.isSubsetOf` assignSet]
+                        fDeps f `S.isSubsetOf` asDeps]
       contradictions = [f | f <- validFacts, fName f == "false"]
       -- Prefer contradictions that involve embeddings/alternating in their derivation
+      scoreContr :: Fact -> (Int, Int, Int)
       scoreContr f =
         let tree = buildProofTreeMemo Env{..} f 12
             mentionsEmbed = containsName tree (\nm -> nm == "embedsInSym" || nm == "alternatingGroup")
             topName = case fProv f of
                         Just ProvTheorem{..} -> thmName
                         _ -> ""
+            prefersTop :: Int
             prefersTop = if topName == "OrderMustDivideSym" || topName == "OrderMustDivideAlt" then 0 else 1
             depth = pnDepth tree
-        in (if mentionsEmbed then 0 else 1, prefersTop, depth)
+        in (if mentionsEmbed then (0 :: Int) else (1 :: Int), prefersTop, depth)
       containsName (ProofNode (Fact nm _ _ _) _ parents _) p =
         p nm || any (\ch -> containsName ch p) parents
       bestContr = case contradictions of
@@ -284,10 +290,11 @@ printCaseResolution Env{..} disjIds (caseNum, assignment) = do
 -- Deduplicate identical disjunctions by structure (name and args of alts)
 dedupDisjunctions :: Env -> [Int] -> [Int]
 dedupDisjunctions Env{..} dids =
-  let keyOf did = case M.lookup did eDisjs of
+  let
+      keyOf did = case M.lookup did eDisjs of
         Just Disj{..} -> Just (map (\(Fact nm as _ _) -> (nm, as)) dAlts)
         Nothing -> Nothing
-      go acc seenKeys [] = reverse acc
+      go acc _ [] = reverse acc
       go acc (seenKeys :: S.Set [(String,[String])]) (d:ds) =
         case keyOf d of
           Just k -> if S.member k seenKeys
@@ -303,13 +310,14 @@ dedupFactDeps Env{eDisjs=eDisjs} f@Fact{..} =
       -- keep smallest did for identical disjunctions
       grouped = M.fromListWith min
         [ (key, did)
-        | (did, idx) <- deps
+        | d <- deps
+        , let did = depDisjInt d
         , let key = case M.lookup did eDisjs of
                        Just Disj{..} -> Just (map (\(Fact nm as _ _) -> (nm, as)) dAlts)
                        Nothing -> Nothing
         ]
       didsToKeep = S.fromList (M.elems grouped)
-      newDeps = S.fromList [ (did, idx) | (did, idx) <- deps, S.member did didsToKeep ]
+      newDeps = S.fromList [ d | d <- deps, S.member (depDisjInt d) didsToKeep ]
   in f { fDeps = newDeps }
 
 -- Pick any easy terminal contradictions and return its labels
@@ -334,7 +342,8 @@ printProofStats Env{..} = do
   putStrLn $ "Total facts: " ++ show (S.size eFacts)
   putStrLn $ "Total disjunctions: " ++ show (M.size eDisjs)
   
-  let factsByTheorem = M.fromListWith (+) 
+  let factsByTheorem :: M.Map String Int
+      factsByTheorem = M.fromListWith (+) 
         [(case fProv f of
             Just ProvTheorem{..} -> thmName
             Just ProvHypothesis -> "hypothesis"  
