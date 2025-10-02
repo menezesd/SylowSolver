@@ -68,9 +68,7 @@ streamTheoremApplications config theorems facts =
 -- | Stream applications for a single theorem  
 streamSingleTheorem :: StreamConfig -> [Fact] -> Theorem -> [(String, ThmOut, S.Set Dep, [Fact], Subst)]
 streamSingleTheorem StreamConfig{..} facts theorem@Theorem{..} =
-  let Template patterns = tTemplate
-      tupleSize = length patterns
-      candidateTuples = take maxTuples $ lazyFactTuples tupleSize facts
+  let candidateTuples = take maxTuples $ generateTuplesForTemplate facts (tTemplate)
       
       tryApply tuple = case matchTemplate tuple tTemplate of
         Right substitution -> 
@@ -79,12 +77,10 @@ streamSingleTheorem StreamConfig{..} facts theorem@Theorem{..} =
           in Right [(tName, output, parentDeps, tuple, substitution) | output <- outputs]
         Left _ -> Left []
       
-      successfulApplications = [result | tuple <- candidateTuples,
-                                        case tryApply tuple of
-                                          Right results -> True
-                                          Left _ -> False,
-                                        let Right results = tryApply tuple,
-                                        result <- results]
+      successfulApplications = concat [results | tuple <- candidateTuples,
+                                                 let res = tryApply tuple,
+                                                 case res of { Right _ -> True; Left _ -> False },
+                                                 let Right results = res]
   in successfulApplications
 
 -- | Chunked processing for memory efficiency

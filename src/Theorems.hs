@@ -48,15 +48,16 @@ sylowTheorem = Theorem "SylowDivisibilityCongruence"
 -- (only applies when the Sylow subgroup is proper)
 uniqueSylowContradiction :: Theorem
 uniqueSylowContradiction = Theorem "UniqueSylowImpliesNotSimple" 
-  (Template [fact "simple" ["G"], fact "numSylow" ["p","G","*1"], fact "order" ["G","n"]])
+  (Template [fact "simple" ["G"], fact "numSylow" ["p","G","*1"], fact "sylowOrder" ["G","p","pk"], fact "order" ["G","n"]])
   applyUniqueSylow
   where
-    applyUniqueSylow [_, Fact _ [pStr, _, _] _ _, Fact _ [_, nStr] _ _] =
-      case (safeRead pStr :: ProverResult Integer, safeRead nStr :: ProverResult Integer) of
-        (Right p, Right n) -> 
-          -- Only apply if p^k < n (proper subgroup)
-          if p < n then [TOFact (fact "false" [])] else []
-        _ -> []
+    applyUniqueSylow [_, Fact _ [pStr, _, _] _ _, Fact _ [_, p2Str, pkStr] _ _, Fact _ [_, nStr] _ _]
+      | pStr == p2Str =
+        case (safeRead pkStr :: ProverResult Integer, safeRead nStr :: ProverResult Integer) of
+          (Right pk, Right n) -> 
+            -- Only apply if p^k < n (proper subgroup)
+            if pk < n then [TOFact (fact "false" [])] else []
+          _ -> []
     applyUniqueSylow _ = []
 
 -- Generate Sylow p-subgroup facts when needed for counting
@@ -87,6 +88,38 @@ actionOnSylowSubgroups = Theorem "ActionOnSylowSubgroups"
                     else []
         _ -> []
     applyAction _ = []
+
+-- Any transitive action of degree n yields a faithful embedding G ↪ S_n (encode as embedsInSym)
+actionEmbedsInSym :: Theorem
+actionEmbedsInSym = Theorem "ActionEmbedsInSym"
+  (Template [fact "transitiveAction" ["G","n"]])
+  applyActionEmbeds
+  where
+    applyActionEmbeds [Fact _ [g, nStr] _ _] =
+      -- Represent S_n as the string "S" ++ n
+      [TOFact (fact "embedsInSym" [g, "S" ++ nStr])]
+    applyActionEmbeds _ = []
+
+-- Order must divide symmetric group order
+orderDividesSym :: Theorem
+orderDividesSym = Theorem "OrderMustDivideSym"
+  (Template [fact "embedsInSym" ["G","Sn"], fact "order" ["G","n"]])
+  applySymDivision
+  where
+    applySymDivision [Fact _ [_, snStr] _ _, Fact _ [_, nStr] _ _] =
+      case (safeRead nStr, extractN snStr) of
+        (Right groupOrder, Right m) -> case factorial m of
+          Right factM -> 
+            if factM `mod` groupOrder /= 0 
+               then [TOFact (fact "false" [])]
+               else []
+          Left _ -> [TOFact (fact "false" [])] -- Factorial error
+        _ -> [TOFact (fact "false" [])] -- Parse error
+      where
+        extractN sn = if take 1 sn == "S"
+                     then safeRead (drop 1 sn) :: ProverResult Integer
+                     else Left $ ParseError "Not a symmetric group"
+    applySymDivision _ = []
 
 -- Order must divide alternating group order
 orderDividesAlt :: Theorem
@@ -220,7 +253,7 @@ cosetAction = Theorem "CosetAction"
 
 -- Simple group action theorem: if G is simple and has n_p > 1 Sylow p-subgroups, it embeds in A_{n_p}
 simpleGroupAction :: Theorem
-simpleGroupAction = Theorem "SimpleGroupAction"
+simpleGroupAction = Theorem "EmbedsIntoSnBySylowAction"
   (Template [fact "numSylow" ["p","G","n_p"], fact "simple" ["G"]])
   applySimpleGroupAction
   where
@@ -229,7 +262,7 @@ simpleGroupAction = Theorem "SimpleGroupAction"
            case safeRead npStr of
              (Right n) -> if n > 1 && n <= 20
                          then let sn = "S" ++ npStr
-                              in [TOFact (fact "is" [g, sn])]
+                              in [TOFact (fact "embedsInSym" [g, sn])]
                          else []
              _ -> []
     applySimpleGroupAction _ = []
@@ -394,6 +427,15 @@ normalizerOrderContradiction = Theorem "NormalizerOrderContradiction"
           _ -> []
     applyNormalizerOrderContradiction _ = []
 
+-- Compatibility shim: convert legacy is(G, Sn) facts into embedsInSym(G, Sn)
+convertIsToEmbedsInSym :: Theorem
+convertIsToEmbedsInSym = Theorem "ConvertIsToEmbedsInSym"
+  (Template [fact "is" ["G","Sn"]])
+  applyConvert
+  where
+    applyConvert [Fact _ [g, sn] _ _] = [TOFact (fact "embedsInSym" [g, sn])]
+    applyConvert _ = []
+
 -- Enhanced counting for prime-order Sylow subgroups: when Sylow p-subgroups have prime order p, 
 -- they intersect trivially, giving (p-1) * num_sylows elements of order p
 primeOrderCounting :: Theorem
@@ -475,7 +517,12 @@ standardTheorems =
   , uniqueSylowContradiction  
   , sylowPSubgroupGeneration
   , actionOnSylowSubgroups
+  , actionEmbedsInSym
+  , convertIsToEmbedsInSym
+  , orderDividesSym
   , orderDividesAlt
+  , sylowNormalizerIndex
+  , normalizerAutBoundPrime
   , countOrderPkElements
   , countingContradiction
   , lagrangeTheorem
@@ -497,3 +544,33 @@ standardTheorems =
   , simpleNotSimple
   , possibleAn
   ]
+
+-- New: If there are n_p Sylow p-subgroups of G, then index(N_G(P)) = n_p
+-- We record index(N,P) = n_p as a fact, and if order(G,n) and order(P,p) with p prime, we can derive order of normalizer divides n with index n_p
+sylowNormalizerIndex :: Theorem
+sylowNormalizerIndex = Theorem "SylowNormalizerIndex"
+  (Template [fact "numSylow" ["p","G","n_p"], fact "sylowPSubgroup" ["P","p","G"]])
+  applySylowNormalizerIndex
+  where
+    applySylowNormalizerIndex [Fact _ [pStr,g,npStr] _ _, Fact _ [p2Str,p3Str,g2] _ _]
+      | g == g2 && pStr == p2Str && p2Str == p3Str =
+          [TOFact (fact "index" ["N","G", npStr]),
+           TOFact (fact "subgroup" ["N","G"]),
+           TOFact (fact "normalizer" [g, "P", "N"])]
+    applySylowNormalizerIndex _ = []
+
+-- New: If P is a Sylow p-subgroup of prime order p and n_p > 1, then n_p | (p-1)
+-- Encoded as: when sylowOrder(G,p,p) and numSylow(p,G,n) with n>1, then divides(n, p-1)
+normalizerAutBoundPrime :: Theorem
+normalizerAutBoundPrime = Theorem "NormalizerAutBoundPrime"
+  (Template [fact "sylowOrder" ["G","p","p"], fact "numSylow" ["p","G","n"], fact "order" ["G","N"]])
+  applyAutBound
+  where
+    applyAutBound [Fact _ [g1,pStr1,_] _ _, Fact _ [pStr2,g2,nStr] _ _, Fact _ [g3,nTotalStr] _ _]
+      | g1 == g2 && g2 == g3 && pStr1 == pStr2 =
+          case (safeRead pStr1 :: ProverResult Integer, safeRead nStr :: ProverResult Integer) of
+            (Right p, Right n) -> if n > 1
+                                  then [TOFact (fact "divides" [nStr, show (p-1)])]
+                                  else []
+            _ -> []
+    applyAutBound _ = []

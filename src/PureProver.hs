@@ -14,6 +14,12 @@ import Data.List (intercalate)
 import Types
 import Errors  
 import Matching
+-- | Generate candidate tuples that match pattern fact names (prunes search drastically)
+generateTuplesForTemplate :: [Fact] -> Template -> [[Fact]]
+generateTuplesForTemplate facts (Template patterns) =
+  sequence [ filter (\f -> fName f == fName pat && length (fArgs f) == length (fArgs pat)) facts
+           | pat <- patterns
+           ]
 
 -- | Helper to lift ProverResult into ProverM
 liftError :: ProverResult a -> ProverM a
@@ -146,32 +152,30 @@ stepRound theorems = do
   
   if S.null (eFrontier env0)
     then do
-      modify $ \e -> e { eFrontier = S.empty }
+      modify (\env -> env { eFrontier = S.empty })
       return False
     else do
       let factsList = S.toList (eFacts env0)
       
-      -- Simple theorem applications without complex lazy evaluation for now
-      let tryApplications = do
-            theorem@Theorem{..} <- theorems
-            let Template patterns = tTemplate
-                tupleSize = length patterns
-                candidateTuples = take 100 $ orderedTuples tupleSize factsList  -- Limit for performance
-            tuple <- candidateTuples
-            case matchTemplate tuple tTemplate of
-              Right subst -> do
-                let outputs = tApply tuple
-                    parentDeps = S.unions (map fDeps tuple)
-                output <- outputs
-                return (tName, output, parentDeps, tuple, subst)
-              Left _ -> []
-      
+      -- Simple theorem applications with pruned tuple enumeration by fact names
+      let tryOne theorem =
+            let candidateTuples = take 10000 (generateTuplesForTemplate factsList (tTemplate theorem))
+                appsForTuple tuple =
+                  case matchTemplate tuple (tTemplate theorem) of
+                    Right subst ->
+                      let outputs = tApply theorem tuple
+                          parentDeps = S.unions (map fDeps tuple)
+                      in [ (tName theorem, out, parentDeps, tuple, subst) | out <- outputs ]
+                    Left _ -> []
+            in concatMap appsForTuple candidateTuples
+          tryApplications = concatMap tryOne theorems
+
       -- Process applications  
-      hasWork <- foldM processApplication False (take 100 tryApplications) -- Limit for performance
+      hasWork <- foldM processApplication False (take 1000 tryApplications) -- Increased limit
       
       -- Update frontier
       finalEnv <- get
-      modify $ \e -> e { eFrontier = S.difference (eFacts finalEnv) (eFacts env0) }
+      modify (\env -> env { eFrontier = S.difference (eFacts finalEnv) (eFacts env0) })
       return hasWork
   where
     processApplication hasWork (theoremName, output, parentDeps, parents, substitution) = do
