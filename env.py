@@ -241,8 +241,8 @@ class ProofEnvironment:
                 for idx, (full_combo, covered_by) in enumerate(combo_coverings):
                     if idx >= 200:
                         break
-                    print(f"fullCombo #{idx}: {sorted(list(full_combo))}")
-                    print(f"coveredBy: { [sorted(list(x)) for x in covered_by] }")
+                    # print(f"fullCombo #{idx}: {sorted(list(full_combo))}")
+                    # print(f"coveredBy: { [sorted(list(x)) for x in covered_by] }")
                     # For each covering observed combo, print its producers (fact label -> (name,args))
                     for cov in covered_by:
                         producers = []
@@ -254,7 +254,7 @@ class ProofEnvironment:
                                 producers.append((dlabel, f.name, tuple(f.args)))
                             else:
                                 producers.append((dlabel, None, None))
-                        print(f"producers for {sorted(list(cov))} -> {producers}")
+                        # print(f"producers for {sorted(list(cov))} -> {producers}")
             except OSError:
                 pass
 

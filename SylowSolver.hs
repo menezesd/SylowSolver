@@ -5,12 +5,13 @@
 -- architecture from the provided paper draft.
 import           Control.Monad (guard, foldM)
 import           Control.Monad.RWS.Strict (RWS, ask, get, put, runRWS, tell)
-import           Data.List (nub, intercalate)
+import           Data.List (nub, intercalate, permutations)
 import qualified Data.Map.Strict as M
 import           Data.Maybe (fromMaybe)
 import qualified Data.Set as S
 import           System.Environment (getArgs)
 import           System.IO (isEOF)
+import           Debug.Trace (trace)
 
 --------------------------------------------------------------------------------
 -- Core data model: Facts, Disjunctions, Dependencies
@@ -21,7 +22,13 @@ data Fact = Fact
   , fArgs  :: [String]
   , fDeps  :: S.Set Dep
   , fProv  :: Maybe Provenance
-  } deriving (Eq, Ord)
+  }
+
+instance Eq Fact where
+  (Fact n1 as1 _ _) == (Fact n2 as2 _ _) = n1 == n2 && as1 == as2
+
+instance Ord Fact where
+  compare (Fact n1 as1 _ _) (Fact n2 as2 _ _) = compare (n1, as1) (n2, as2)
 
 instance Show Fact where
   show (Fact n as deps prov)
@@ -66,7 +73,7 @@ matchTemplate facts (Template pats)
   matchArgs sigma [] = Just sigma
   matchArgs sigma ((a,p):xs)
     | isFixed p  = if a == drop 1 p then matchArgs sigma xs else Nothing -- Corrected
-    | isWildcard p = Nothing
+    | isWildcard p = matchArgs sigma xs -- Wildcard matches anything, don't bind.
     | otherwise  = case M.lookup p sigma of
         Nothing -> matchArgs (M.insert p a sigma) xs
         Just a' | a' == a -> matchArgs sigma xs
@@ -153,30 +160,51 @@ processThmOutsM thmNameParam thmOut parentDeps parents sigma =
 
 stepRoundM :: ProverM ()
 stepRoundM = do
-   eng' <- ask
-   env0' <- get
-   if S.null (eFrontier env0')
-     then put env0' { eFrontier = S.empty }
-     else do
-       -- compute applications from current env snapshot
-       let factsList = S.toList (eFacts env0')
-           runThm thm@Theorem{..} = do
-             let Template pats = tTemplate
-                 k = length pats
-                 tuples = orderedTuples k factsList
-             concatMap (\tuple -> case matchTemplate tuple tTemplate of
-                                       Nothing -> []
-                                       Just sigma -> let concreteTuple = map (substFact sigma) tuple
-                                                         parentDeps = S.unions (map fDeps concreteTuple)
-                                                         outputs = tApply concreteTuple
-                                                     in map (\out -> (tName, out, parentDeps, concreteTuple, sigma)) outputs
-                        ) tuples
-       let applications = concatMap runThm (thms eng')
-       -- apply each
-       mapM_ (\(tname, out, pdeps, parents, sigma) -> processThmOutsM tname out pdeps parents sigma) applications
-       -- update frontier
-       envFinal <- get
-       put envFinal { eFrontier = S.difference (eFacts envFinal) (eFacts env0') }
+  eng <- ask
+  env0 <- get
+  if S.null (eFrontier env0)
+    then put env0 { eFrontier = S.empty }
+    else do
+      let allFacts = S.toList (eFacts env0)
+          frontierFacts = S.toList (eFrontier env0)
+          
+          -- Generate tuples where at least one element is from the frontier
+          incrementalTuples k =
+            let go 0 _ = [[]]
+                go _ [] = []
+                go n (isFrontier:rest) =
+                  let source = if isFrontier then frontierFacts else allFacts
+                  in [x:xs | x <- source, xs <- go (n-1) rest]
+            in nub $ concat [go k (replicate i False ++ [True] ++ replicate (k-i-1) False) | i <- [0..k-1]]
+
+          runThm thm@Theorem{..} = do
+            let Template pats = tTemplate
+                k = length pats
+                -- Corrected logic: generate all permutations of k-tuples from allFacts
+                tuples = if k > 0 && k <= 5 -- Safety break for large templates
+                         then permutations (S.toList (eFacts env0))
+                         else []
+            concatMap (\tuple ->
+                        let tuple' = take k tuple in
+                        if length tuple' < k then []
+                        else case matchTemplate tuple' tTemplate of
+                          Nothing -> []
+                          Just sigma ->
+                            let concreteTuple = map (substFact sigma) tuple'
+                                parentDeps = S.unions (map fDeps concreteTuple)
+                                outputs = tApply concreteTuple
+                            in map (\out -> (tName, out, parentDeps, concreteTuple, sigma)) outputs
+                      ) tuples
+
+      let applications = concatMap runThm (thms eng)
+      
+      mapM_ (\(tname, out, pdeps, parents, sigma) -> processThmOutsM tname out pdeps parents sigma) applications
+      
+      envFinal <- get
+      let newFacts = S.difference (eFacts envFinal) (eFacts env0)
+      trace ("\n--- Round finished, " ++ show (S.size newFacts) ++ " new facts ---\n" ++ unlines (map show (S.toList newFacts)) ++ "\n") (pure ())
+      put envFinal { eFrontier = newFacts }
+
 substFact :: Subst -> Fact -> Fact
 substFact s (Fact n as deps prov) = Fact n (map sub as) deps prov
   where sub x | isFixed x = x | isWildcard x = x | otherwise = fromMaybe x (M.lookup x s)
@@ -285,8 +313,6 @@ defaultEngine :: Engine
 defaultEngine = Engine [ sylowTheorem, uniqueSylowContradiction, embedIntoAn, orderDividesAlt ] 50 12
 
 -- Note: `stepRound` and its helpers are now implemented inside `runProver` using the RWS-based ProverM.
-
-orderedTuples :: Int -> [a] -> [[a]]; orderedTuples 0 _ = [[]]; orderedTuples _ [] = []; orderedTuples k xs = [ x:ys | x <- xs, ys <- orderedTuples (k-1) xs ]
 
 proved :: Engine -> Env -> Fact -> Bool
 proved Engine{..} Env{..} goalPat =

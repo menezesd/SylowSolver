@@ -838,7 +838,8 @@ def matching_test():
     # matching_test: intentionally quiet; use fact.do_print() in a debugger if needed
     for match in matches:
         for fact in match:
-            fact.do_print()
+            # fact.do_print()
+            pass
 
 
 #   matches,dicts = match_facts_to_template(template, facts)
