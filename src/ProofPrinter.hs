@@ -5,8 +5,9 @@ module ProofPrinter where
 
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.List (intercalate)
+import Data.List (intercalate, sort, sortOn)
 import Data.Maybe (fromMaybe)
+import Control.Monad.State.Strict (State, evalState, get, put)
 
 import Types
 
@@ -42,17 +43,37 @@ data ProofNode = ProofNode
   , pnDepth :: Int
   } deriving (Show)
 
--- | Build proof tree for a fact
-buildProofTree :: Env -> Fact -> Int -> ProofNode
-buildProofTree env fact maxDepth
-  | maxDepth <= 0 = ProofNode fact (fProv fact) [] 0
-  | otherwise = case fProv fact of
-      Nothing -> ProofNode fact Nothing [] 0
-      Just ProvHypothesis -> ProofNode fact (Just ProvHypothesis) [] 0
-      Just prov@ProvTheorem{..} -> 
-        let parentTrees = map (\p -> buildProofTree env p (maxDepth - 1)) parentFacts
-            depth = 1 + maximum (0 : map pnDepth parentTrees)
-        in ProofNode fact (Just prov) parentTrees depth
+-- | Build proof tree for a fact (memoized)
+type MemoKey = (Fact, Int)
+type MemoMap = M.Map MemoKey ProofNode
+
+buildProofTreeMemo :: Env -> Fact -> Int -> ProofNode
+buildProofTreeMemo _ fact maxDepth | maxDepth <= 0 = ProofNode fact (fProv fact) [] 0
+buildProofTreeMemo _ fact 0 = ProofNode fact (fProv fact) [] 0
+buildProofTreeMemo _ fact n | n < 0 = ProofNode fact (fProv fact) [] 0
+buildProofTreeMemo _ fact _ | fProv fact == Nothing = ProofNode fact Nothing [] 0
+buildProofTreeMemo _ fact _ | fProv fact == Just ProvHypothesis = ProofNode fact (Just ProvHypothesis) [] 0
+buildProofTreeMemo _ fact _ | otherwise = evalState (go fact 12) M.empty
+  where
+    go :: Fact -> Int -> State MemoMap ProofNode
+    go f d
+      | d <= 0 = return $ ProofNode f (fProv f) [] 0
+      | otherwise = do
+          memo <- get
+          let key = (f, d)
+          case M.lookup key memo of
+            Just node -> return node
+            Nothing -> do
+              node <- case fProv f of
+                Nothing -> return $ ProofNode f Nothing [] 0
+                Just ProvHypothesis -> return $ ProofNode f (Just ProvHypothesis) [] 0
+                Just prov@ProvTheorem{..} -> do
+                  parentTrees <- mapM (\p -> go p (d - 1)) parentFacts
+                  let depth = 1 + maximum (0 : map pnDepth parentTrees)
+                  return $ ProofNode f (Just prov) parentTrees depth
+              memo' <- get
+              put (M.insert key node memo')
+              return node
 
 -- | Pretty print a proof tree
 prettyProofTree :: ProofNode -> [String]
@@ -75,13 +96,13 @@ prettyProofTree = prettyProofTree' 0
 -- | Find minimal proof for goal
 findMinimalProof :: Env -> Fact -> Maybe ProofNode
 findMinimalProof env goal =
-  let instances = findGoalInstances env goal
-      trees = map (\inst -> buildProofTree env inst 10) instances
-      -- Pick the tree with smallest depth
-      minTree = case trees of
-        [] -> Nothing
-        ts -> Just $ minimumBy (\a b -> compare (pnDepth a) (pnDepth b)) ts
-  in minTree
+    let instances = findGoalInstances env goal
+        trees = map (\inst -> buildProofTreeMemo env inst 10) instances
+        -- Pick the tree with smallest depth
+        minTree = case trees of
+          [] -> Nothing
+          ts -> Just $ minimumBy (\a b -> compare (pnDepth a) (pnDepth b)) ts
+    in minTree
   where
     minimumBy f (x:xs) = foldl (\acc y -> if f y acc == LT then y else acc) x xs
     minimumBy _ [] = error "minimumBy: empty list"
@@ -141,16 +162,16 @@ estimateCombos Env{..} instances =
 
 -- | Choose one contradiction instance and its assignment for printing a concrete proof
 pickBestContradiction :: Env -> [Fact] -> Maybe (Fact, S.Set Dep, [String])
-pickBestContradiction env@Env{..} instances =
+pickBestContradiction env instances =
   let withDeps = [(f, fDeps f) | f <- instances]
       -- Heuristic: prefer proofs that mention embedding/alternating, then fewer disjunctions, then smaller depth
       hasEmbed t =
-        let node = buildProofTree env t 10
+        let node = buildProofTreeMemo env t 10
             mentionsEmbeds = containsName node (\n -> n == "embedsInSym" || n == "alternatingGroup")
         in if mentionsEmbeds then 0 else 1  -- lower is better
       containsName (ProofNode (Fact nm _ _ _) _ parents _) p =
         p nm || any (\ch -> containsName ch p) parents
-      scored = [ (f, deps, hasEmbed f, S.size deps, pnDepth (buildProofTree env f 10))
+      scored = [ (f, deps, hasEmbed f, S.size deps, pnDepth (buildProofTreeMemo env f 10))
                | (f, deps) <- withDeps]
       cmp ( _, _, e1, k1, d1) ( _, _, e2, k2, d2) = compare e1 e2 <> compare k1 k2 <> compare d1 d2
   in case sortByMaybe cmp scored of
@@ -184,13 +205,11 @@ printCaseAnalysis :: Env -> [Fact] -> IO ()
 printCaseAnalysis env@Env{..} instances = do
   let allDeps = S.unions (map fDeps instances)
       disjIdsRaw = S.toList (S.map fst allDeps)
-      disjIds = dedupDisjunctions env disjIdsRaw
+      disjIds = sort (dedupDisjunctions env disjIdsRaw)
       arities = [(did, length (case M.lookup did eDisjs of
                                  Just disj -> dAlts disj
                                  Nothing -> [])) 
                 | did <- disjIds]
-      totalCombos = product [arity | (_, arity) <- arities]
-      maxCombosToPrint = 1024  -- prevent explosion
       
   putStrLn $ "Analyzing " ++ show (length disjIds) ++ " disjunctions:"
   
@@ -204,31 +223,31 @@ printCaseAnalysis env@Env{..} instances = do
   putStrLn $ "Checking " ++ show (length assignments) ++ " case combinations:"
   mapM_ (printCaseResolution env disjIdsList) (zip [1..] assignments)
   
-  where
-    printDisjunction did = case M.lookup did eDisjs of
-      Nothing -> putStrLn $ "  Disjunction " ++ show did ++ ": (not found)"
-      Just Disj{..} -> do
-        putStrLn $ "  " ++ fromMaybe ("Disjunction " ++ show did) dLabel ++ ":"
-        case dProv of
-          Just ProvTheorem{..} -> do
-            putStrLn $ "    Generated by: " ++ thmName
-            putStrLn $ "    From: " ++ intercalate " ∧ " (map prettyFact parentFacts)
-          _ -> return ()
-        putStrLn "    Cases:"
-        mapM_ (\(i, alt) -> putStrLn $ "      [" ++ show i ++ "] " ++ prettyFact alt) 
-              (zip [0..] dAlts)
+    where
+      printDisjunction did = case M.lookup did eDisjs of
+        Nothing -> putStrLn $ "  Disjunction " ++ show did ++ ": (not found)"
+        Just Disj{..} -> do
+          putStrLn $ "  " ++ fromMaybe ("Disjunction " ++ show did) dLabel ++ ":"
+          case dProv of
+            Just ProvTheorem{..} -> do
+              putStrLn $ "    Generated by: " ++ thmName
+              putStrLn $ "    From: " ++ intercalate " ∧ " (map prettyFact parentFacts)
+            _ -> return ()
+          putStrLn "    Cases:"
+          mapM_ (\(i :: Int, alt) -> putStrLn $ "      [" ++ show i ++ "] " ++ prettyFact alt)
+                (zip [0 :: Int ..] dAlts)
 
 -- | Print how a specific case assignment resolves
 printCaseResolution :: Env -> [Int] -> (Int, [Int]) -> IO ()
 printCaseResolution Env{..} disjIds (caseNum, assignment) = do
   let assignSet = S.fromList (zip disjIds assignment)
       caseLabels = [getCaseLabel did idx | (did, idx) <- zip disjIds assignment]
-      validFacts = [f | f <- S.toList eFacts, 
+      validFacts = [f | f <- sortOn (\f -> (fName f, fArgs f)) (S.toList eFacts), 
                        fDeps f `S.isSubsetOf` assignSet]
       contradictions = [f | f <- validFacts, fName f == "false"]
       -- Prefer contradictions that involve embeddings/alternating in their derivation
       scoreContr f =
-        let tree = buildProofTree Env{..} f 12
+        let tree = buildProofTreeMemo Env{..} f 12
             mentionsEmbed = containsName tree (\nm -> nm == "embedsInSym" || nm == "alternatingGroup")
             topName = case fProv f of
                         Just ProvTheorem{..} -> thmName
@@ -242,14 +261,14 @@ printCaseResolution Env{..} disjIds (caseNum, assignment) = do
                     [] -> Nothing
                     cs -> Just $ snd $ minimumByCmp compare (map (\c -> (scoreContr c, c)) cs)
   
-  putStrLn $ "  Case " ++ show caseNum ++ ": " ++ intercalate ", " caseLabels
+  putStrLn $ "  Case " ++ show (caseNum :: Int) ++ ": " ++ intercalate ", " caseLabels
   
   if maybe False (const True) bestContr
     then do
       let contradiction = fromMaybe (head contradictions) bestContr
       putStrLn $ "    → CONTRADICTION: " ++ prettyFact contradiction
       -- Print full derivation for this case
-      mapM_ putStrLn $ map ("    " ++) (prettyProofTree (buildProofTree Env{..} contradiction 12))
+      mapM_ putStrLn $ map ("    " ++) (prettyProofTree (buildProofTreeMemo Env{..} contradiction 12))
     else putStrLn $ "    → No direct contradiction found"
   
   where
@@ -259,9 +278,6 @@ printCaseResolution Env{..} disjIds (caseNum, assignment) = do
                    else "case_" ++ show idx
       Nothing -> "unknown"
     
-    provToString ProvHypothesis = "hypothesis"
-    provToString ProvTheorem{..} = thmName ++ " applied to " ++ 
-                    intercalate ", " (map prettyFact parentFacts)
     minimumByCmp cmpf (x:xs) = foldl (\acc y -> if cmpf (fst y) (fst acc) == LT then y else acc) x xs
     minimumByCmp _ [] = error "minimumByCmp: empty list"
 
@@ -282,7 +298,7 @@ dedupDisjunctions Env{..} dids =
 
 -- Remove duplicate disjunction dependencies from a fact (by identical disjunction key)
 dedupFactDeps :: Env -> Fact -> Fact
-dedupFactDeps env@Env{..} f@Fact{..} =
+dedupFactDeps Env{eDisjs=eDisjs} f@Fact{..} =
   let deps = S.toList fDeps
       -- keep smallest did for identical disjunctions
       grouped = M.fromListWith min
@@ -299,10 +315,10 @@ dedupFactDeps env@Env{..} f@Fact{..} =
 -- Pick any easy terminal contradictions and return its labels
 -- Easy terminals for this problem family: n2=1, n3=1, n2=3, n3=4
 pickEasyTerminal :: Env -> [Fact] -> Maybe (Fact, [String])
-pickEasyTerminal env@Env{..} instances =
+pickEasyTerminal env instances =
   let instances' = map (dedupFactDeps env) instances
       withDeps = [ (f, depsToLabels env (S.toList (fDeps f))) | f <- instances']
-      easy f labels = any (\s ->
+      easy _ labels = any (\s ->
                            s == "numSylow(2, G, 1)" ||
                            s == "numSylow(3, G, 1)" ||
                            s == "numSylow(2, G, 3)" ||
