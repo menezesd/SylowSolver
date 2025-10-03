@@ -67,6 +67,7 @@ data Pred
   | PSubgroup
   | PIndex
   | PNormalizer
+  | PNormalizerOfSylowIntersection
   | PCentralizer
   | PNormal
   | PSimple
@@ -103,6 +104,7 @@ predToString p = case p of
   PSubgroup -> "subgroup"
   PIndex -> "index"
   PNormalizer -> "normalizer"
+  PNormalizerOfSylowIntersection -> "normalizerOfSylowIntersection"
   PCentralizer -> "centralizer"
   PNormal -> "normal"
   PSimple -> "simple"
@@ -129,6 +131,7 @@ parsePred s = case s of
   "subgroup" -> Just PSubgroup
   "index" -> Just PIndex
   "normalizer" -> Just PNormalizer
+  "normalizerOfSylowIntersection" -> Just PNormalizerOfSylowIntersection
   "centralizer" -> Just PCentralizer
   "normal" -> Just PNormal
   "simple" -> Just PSimple

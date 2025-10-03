@@ -435,8 +435,10 @@ normalizerSylowIntersection = mkTheoremT "NormalizerSylowIntersection"
                       Right divisors ->
                         let validOrders = [d | d <- divisors, d `mod` pk == 0, d > pk]
                             orderFacts = [mkFactP POrder [Sym normalizer_name, Nat d] | d <- validOrders]
+                            pInt = case safeRead pStr3 :: ProverResult Integer of { Right x -> x; _ -> 0 }
                         in [ TOFact (mkFactP PNormalizer [Sym g1, Sym r, Sym normalizer_name])
                            , TOFact (mkFactP PSubgroup [Sym normalizer_name, Sym g1])
+                           , TOFact (mkFactP PNormalizerOfSylowIntersection [Nat pInt, Sym g1, Sym normalizer_name])
                            ] ++
                            (case orderFacts of
                               [] -> []
@@ -446,6 +448,46 @@ normalizerSylowIntersection = mkTheoremT "NormalizerSylowIntersection"
             else []
           _ -> []
     applyNormalizerSylowIntersection _ = []
+
+-- Tagging theorem (redundant path): if normalizer(G,R,T), both P,Q are Sylow p-subgroups in G and intersect to R, then tag normalizerOfSylowIntersection(p,G,T)
+tagNormalizerOfSylowIntersection :: Theorem
+tagNormalizerOfSylowIntersection = mkTheoremT "TagNormalizerOfSylowIntersection"
+  (mkTTemplate [ mkTPattern "normalizer" [vpVar "G", vpVar "R", vpVar "T"]
+               , mkTPattern "subgroup" [vpVar "T", vpVar "G"]
+               , mkTPattern "sylowPSubgroup" [vpVar "P", vpVar "p", vpVar "G"]
+               , mkTPattern "sylowPSubgroup" [vpVar "Q", vpVar "p", vpVar "G"]
+               , mkTPattern "intersection" [vpVar "P", vpVar "Q", vpVar "R"]
+               ])
+  applyTag
+  where
+    applyTag [Fact _ [g, r, t] _ _, Fact _ [t2, g2] _ _, Fact _ [_, p1, g3] _ _, Fact _ [_, p2, g4] _ _, Fact _ [_, _, r2] _ _]
+      | t == t2 && g == g2 && g2 == g3 && g3 == g4 && r == r2 && p1 == p2 =
+          case safeRead p1 :: ProverResult Integer of
+            Right p -> [TOFact (mkFactP PNormalizerOfSylowIntersection [Nat p, Sym g, Sym t])]
+            _ -> []
+    applyTag _ = []
+
+-- Rule out normalizer-of-intersection orders that force unique Sylow p-subgroup in T
+ruleOutNormalizerOfIntersectionOrder :: Theorem
+ruleOutNormalizerOfIntersectionOrder = mkTheoremT "RuleOutNormalizerOfIntersectionOrder"
+  (mkTTemplate [ mkTPattern "normalizerOfSylowIntersection" [vpVar "p", vpVar "G", vpVar "T"]
+               , mkTPattern "order" [vpVar "T", vpVar "k"]
+               ])
+  applyRuleOut
+  where
+    applyRuleOut [Fact _ [pStr, _, _] _ _, Fact _ [_, kStr] _ _] =
+      case (safeRead pStr :: ProverResult Integer, safeRead kStr :: ProverResult Integer) of
+        (Right p, Right k) ->
+          let a = highestPowerDividing p k
+              pk = p ^ a
+              m = if pk == 0 then 0 else k `div` pk
+              divisors = case allDivisors m of { Right ds -> ds; Left _ -> [] }
+              candidates = [d | d <- divisors, d `mod` p == 1]
+          in if candidates == [1]
+               then [TOFact (mkFactP PFalse [])]
+               else []
+        _ -> []
+    applyRuleOut _ = []
 
 -- Rule out impossible normalizer orders: if normalizer forces unique Sylow subgroup, contradiction
 normalizerOrderContradiction :: Theorem
@@ -565,6 +607,8 @@ standardTheorems =
   , intersectionOfSylows
   , normalizerImpliesNormal
   , normalizerSylowIntersection
+  , tagNormalizerOfSylowIntersection
+  , ruleOutNormalizerOfIntersectionOrder
   , normalizerOrderContradiction
   , primeOrderCounting
   , orderPkCountingContradiction
