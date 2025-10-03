@@ -1,6 +1,7 @@
 -- | Core data types for the Sylow solver
 module Types where
 
+import qualified Data.Heap as H
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
@@ -67,8 +68,6 @@ data Pred
   | PSubgroup
   | PIndex
   | PNormalizer
-  | PNormalizerOfSylowIntersection
-  | PCentralizer
   | PNormal
   | PSimple
   | PNotSimple
@@ -104,8 +103,6 @@ predToString p = case p of
   PSubgroup -> "subgroup"
   PIndex -> "index"
   PNormalizer -> "normalizer"
-  PNormalizerOfSylowIntersection -> "normalizerOfSylowIntersection"
-  PCentralizer -> "centralizer"
   PNormal -> "normal"
   PSimple -> "simple"
   PNotSimple -> "notSimple"
@@ -131,8 +128,6 @@ parsePred s = case s of
   "subgroup" -> Just PSubgroup
   "index" -> Just PIndex
   "normalizer" -> Just PNormalizer
-  "normalizerOfSylowIntersection" -> Just PNormalizerOfSylowIntersection
-  "centralizer" -> Just PCentralizer
   "normal" -> Just PNormal
   "simple" -> Just PSimple
   "notSimple" -> Just PNotSimple
@@ -155,20 +150,18 @@ parseValueGeneric s = case parseValue s of
     Just n -> Nat n
     Nothing -> Sym s
 
-mkFactP :: Pred -> [Value] -> Fact
-mkFactP p vs = Fact (predToString p) (map renderValue vs) mempty Nothing
 
--- Attempt to decode a Fact into typed predicate and values
+mkFactP :: Pred -> [Value] -> Fact
+mkFactP p vs = Fact p vs mempty Nothing
+
+-- Attempt to decode a Fact into typed predicate and values (now trivial)
 tryParseFact :: Fact -> Maybe (Pred, [Value])
-tryParseFact (Fact nm args _ _) = do
-  p <- parsePred nm
-  let vals = map parseValueGeneric args
-  pure (p, vals)
+tryParseFact (Fact p args _ _) = Just (p, args)
 
 -- Core data model
 data Fact = Fact
-  { fName  :: String
-  , fArgs  :: [String]
+  { fPred  :: Pred
+  , fArgs  :: [Value]
   , fDeps  :: S.Set Dep
   , fProv  :: Maybe Provenance
   } deriving (Eq, Ord, Show)
@@ -207,25 +200,35 @@ data Provenance = ProvHypothesis
                   }
                 deriving (Eq, Ord, Show)
 
+-- A pending theorem application
+data App = App
+  { appThmName :: String
+  , appOutput  :: ThmOut
+  , appDeps    :: S.Set Dep
+  , appParents :: [Fact]
+  , appSubs    :: Subst
+  } deriving (Show)
+
 -- Template matching now uses typed templates (TTemplate)
 
 -- Theorem outputs
 data ThmOut = TOFact Fact | TODisj [Fact] deriving (Eq, Show)
 
-data Theorem = Theorem 
+data Theorem = Theorem
   { tName :: String
   , tTemplate :: TTemplate
   , tApply :: [Fact] -> [ThmOut]
+  , tCost :: Int
   }
 
 -- Prover environment
 data Env = Env
-  { eFacts    :: S.Set Fact
-  , eDisjs    :: M.Map Int Disj
-  , eFrontier :: S.Set Fact
-  , eNextDid  :: Int
-  , eFresh    :: Int
-  , eRound    :: Int
+  { eFacts     :: S.Set Fact
+  , eDisjs     :: M.Map Int Disj
+  , eFrontier  :: S.Set Fact
+  , eAppQueue  :: H.MinPrioHeap Int App
+  , eNextDid   :: Int
+  , eFresh     :: Int
   } deriving (Show)
 
 -- Engine configuration
@@ -293,5 +296,5 @@ mkTTemplate :: [TPattern] -> TTemplate
 mkTTemplate = TTemplate
 
 -- Helper to define a theorem from a typed template
-mkTheoremT :: String -> TTemplate -> ([Fact] -> [ThmOut]) -> Theorem
-mkTheoremT name ttpl applyF = Theorem name ttpl applyF
+mkTheoremT :: String -> Int -> TTemplate -> ([Fact] -> [ThmOut]) -> Theorem
+mkTheoremT name cost ttpl applyF = Theorem name ttpl applyF cost

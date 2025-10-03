@@ -8,18 +8,38 @@ import Control.Monad.Except
 import Control.Monad (foldM, when)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import qualified Data.Heap as H
 -- import Data.Maybe (fromMaybe)
 import Data.List (intercalate)
 
-import Types
+import Types 
+  ( Fact(..)
+  , Pred(..)
+  , Value(..)
+  , predToString
+  , renderValue
+  , TTemplate(..)
+  , TPattern(..)
+  , ValuePat(..)
+  , Theorem(..)
+  , ThmOut(..)
+  , Env(..)
+  , Disj(..)
+  , Dep(..)
+  , mkDep
+  , depDisjInt
+  , depAltInt
+  , Provenance(..)
+  , Subst
+  , TraceEvent(..)
+  )
 import Errors  
 import Matching
-import DebugLog (dtrace)
 -- | Generate candidate tuples that match pattern fact names (prunes search drastically)
 generateTuplesForTemplate :: [Fact] -> TTemplate -> [[Fact]]
 generateTuplesForTemplate facts (TTemplate patterns) =
   let arities = [ (tpName p, length (tpArgs p)) | p <- patterns ]
-  in sequence [ filter (\f -> fName f == nm && length (fArgs f) == ar) facts
+  in sequence [ filter (\f -> predToString (fPred f) == nm && length (fArgs f) == ar) facts
               | (nm, ar) <- arities
               ]
 
@@ -38,7 +58,7 @@ runProverM (ProverM computation) env = runState (runExceptT computation) env
 
 -- | Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty 0 0 0
+emptyEnv = Env S.empty M.empty S.empty H.empty 0 0
 
 -- | Pure fact insertion
 insertFact :: Fact -> ProverM Bool  
@@ -80,18 +100,23 @@ freshName prefix = do
 -- | Materialize wildcards in facts
 materializeWildcards :: [Fact] -> ProverM [Fact]
 materializeWildcards facts = do
-  let wildcards = filter isWildcard $ concatMap fArgs facts
+  let wildcards = filter isWildcardValue $ concatMap fArgs facts
   substitutions <- foldM processWildcard M.empty wildcards
   return $ map (substituteFact substitutions) facts
   where
-    processWildcard subs wildcard
+    -- A wildcard is a Sym starting with '_'
+    isWildcardValue (Sym s) = not (null s) && head s == '_'
+    isWildcardValue _ = False
+
+    processWildcard subs wildcard@(Sym s)
       | wildcard `M.member` subs = return subs
       | otherwise = do
-          let baseName = if null (drop 1 wildcard) then "X" else drop 1 wildcard ++ "_"
+          let baseName = if null (drop 1 s) then "X" else drop 1 s ++ "_"
           newName <- freshName baseName
-          return $ M.insert wildcard newName subs
-    
-    substituteFact subs (Fact n as deps prov) = 
+          return $ M.insert wildcard (Sym newName) subs
+    processWildcard subs _ = return subs  -- Only Sym wildcards are processed
+
+    substituteFact subs (Fact n as deps prov) =
       Fact n (map (\x -> M.findWithDefault x x subs) as) deps prov
 
 -- | Generate ordered tuples efficiently using lazy evaluation
@@ -130,7 +155,7 @@ processTheoremOutput theoremName output parentDeps parents substitution = do
     TODisj alternatives -> do
       materializedAlts <- materializeWildcards alternatives
       env <- get
-      let canonAlt f = fName f ++ "(" ++ intercalate "," (fArgs f) ++ ")"
+      let canonAlt f = predToString (fPred f) ++ "(" ++ intercalate "," (map renderValue (fArgs f)) ++ ")"
           label = Just $ "{" ++ intercalate " | " (map canonAlt materializedAlts) ++ "}"
           disj = Disj 
             { dId = eNextDid env
@@ -152,18 +177,12 @@ stepRound :: [Theorem] -> ProverM Bool
 stepRound theorems = do
   env0 <- get
   
-  -- Increment round counter
-  let env1 = env0 { eRound = eRound env0 + 1 }
-  put env1
-  
-  dtrace ("Round: " ++ show (eRound env1)) $ return ()
-
-  if S.null (eFrontier env1)
+  if S.null (eFrontier env0)
     then do
       modify (\env -> env { eFrontier = S.empty })
       return False
     else do
-      let factsList = S.toList (eFacts env1)
+      let factsList = S.toList (eFacts env0)
       
       -- Simple theorem applications with pruned tuple enumeration by fact names
       let tryOne theorem =
@@ -183,7 +202,7 @@ stepRound theorems = do
       
       -- Update frontier
       finalEnv <- get
-      modify (\env -> env { eFrontier = S.difference (eFacts finalEnv) (eFacts env1) })
+      modify (\env -> env { eFrontier = S.difference (eFacts finalEnv) (eFacts env0) })
       return hasWork
   where
     processApplication hasWork (theoremName, output, parentDeps, parents, substitution) = do
@@ -211,7 +230,7 @@ checkGoalProven :: Fact -> ProverM Bool
 checkGoalProven goalFact = do
   env@Env{..} <- get
   let instances = [f | f <- S.toList eFacts, 
-                      fName f == fName goalFact, 
+                      fPred f == fPred goalFact, 
                       fArgs f == fArgs goalFact]
   
   if null instances

@@ -1,11 +1,14 @@
+{-# LANGUAGE RecordWildCards #-}
+module Prover where
+
 import Control.Monad (when, replicateM)
 import Control.Monad.RWS.Strict (RWS, ask, get, put, runRWS, tell)
+import qualified Data.Heap as H
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe (fromMaybe)
 import Data.List (intercalate, (\\))
 
-import DebugLog (dtrace)
 import Types
 import Matching
 
@@ -14,14 +17,14 @@ type ProverM = RWS Engine [TraceEvent] Env
 
 -- Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty 0 0 0
+emptyEnv = Env S.empty M.empty S.empty H.empty 0 0
 
 insertFact :: Fact -> Env -> (Env, Bool)
 insertFact fact env@Env{..}
   | fact `S.member` eFacts = (env, False)
-  | otherwise = ( env { eFacts = S.insert fact eFacts
-                      , eFrontier = S.insert fact eFrontier 
-                      }, True)
+  | otherwise = 
+      let env' = env { eFacts = S.insert fact eFacts }
+      in (env', True)
 
 insertDisj :: Disj -> Env -> (Env, [Fact])
 insertDisj disj@Disj{..} env0 = (env', taggedAlternatives)
@@ -48,18 +51,19 @@ freshName prefix env@Env{..} =
 materializeWildcards :: [Fact] -> Env -> ([Fact], Env)
 materializeWildcards facts env0 = (map substituteFact facts, finalEnv)
   where
+    isWildcard (Sym s) = not (null s) && head s == '_'
+    isWildcard _ = False
     wildcards = filter isWildcard $ concatMap fArgs facts
     (finalEnv, substitutions) = foldl processWildcard (env0, M.empty) wildcards
-    
-    processWildcard (e, subs) wildcard
+    processWildcard (e, subs) wildcard@(Sym s)
       | wildcard `M.member` subs = (e, subs)
       | otherwise = 
-          let baseName = if null (drop 1 wildcard) then "X" else drop 1 wildcard ++ "_"
+          let baseName = if null (drop 1 s) then "X" else drop 1 s ++ "_"
               (newName, e') = freshName baseName e
-          in (e', M.insert wildcard newName subs)
-    
-    substituteFact (Fact n as deps prov) = 
-      Fact n (map (\x -> M.findWithDefault x x substitutions) as) deps prov
+          in (e', M.insert wildcard (Sym newName) subs)
+    processWildcard (e, subs) _ = (e, subs)
+    substituteFact (Fact p as deps prov) = 
+      Fact p (map (\x -> M.findWithDefault x x substitutions) as) deps prov
 
 -- Monadic operations
 insertFactM :: Fact -> ProverM Bool
@@ -67,20 +71,77 @@ insertFactM fact = do
   env <- get
   let (env', added) = insertFact fact env
   put env'
-  when added $ tell [TraceFactInserted 
-    { teThm = "(insert)"
-    , teFact = fact
-    , teParentDeps = fDeps fact
-    , teParents = []
-    , teSubs = M.empty
-    }]
+  when added $ do
+    tell [TraceFactInserted 
+      { teThm = "(insert)"
+      , teFact = fact
+      , teParentDeps = fDeps fact
+      , teParents = []
+      , teSubs = M.empty
+      }]
+    env <- get
+    let factCount = S.size (eFacts env)
+    updateQueueWithNewFact fact
+    env' <- get
+    let queueSize = H.size (eAppQueue env')
+    tell [TraceFactInserted 
+      { teThm = "DEBUG"
+      , teFact = mkFactP PFalse []
+      , teParentDeps = S.empty
+      , teParents = []
+      , teSubs = M.fromList [("fact_added", predToString (fPred fact)), ("total_facts", show factCount), ("queue_size", show queueSize)]
+      }]
+  when (isContradiction fact) $ handleContradiction fact
   return added
+
+handleContradiction :: Fact -> ProverM ()
+handleContradiction contraFact = do
+  let deps = fDeps contraFact
+  if S.null deps
+    then return () -- Real contradiction, will be handled in proveLoop
+    else do
+      let maxDid = maximum $ map depDisjInt $ S.toList deps
+          maxDep = fromMaybe (error "empty deps") $ S.lookupMax deps
+      
+      tell [TraceFactInserted
+        { teThm = "BACKTRACK"
+        , teFact = mkFactP PFalse []
+        , teParentDeps = S.empty
+        , teParents = []
+        , teSubs = M.fromList [("contradiction_from", show (fProv contraFact)), ("deps", show (S.toList deps)), ("max_dep", show maxDep)]
+        }]
+
+      -- Invalidate facts and applications depending on the failed branch
+      env <- get
+      let factsToInvalidate = S.filter (\f -> maxDep `S.member` fDeps f) (eFacts env)
+          remainingFacts = eFacts env S.\\ factsToInvalidate
+          
+          -- Filter the application queue
+          isValidApp (_, app) = maxDep `S.notMember` appDeps app
+          newQueue = H.filter isValidApp (eAppQueue env)
+
+      put env { eFacts = remainingFacts, eAppQueue = newQueue }
 
 insertDisjM :: Disj -> ProverM [Fact]
 insertDisjM disj = do
   env <- get
-  let (env', alts) = insertDisj disj env
-  put env'
+  let env1 = env { eDisjs = M.insert (dId disj) disj (eDisjs env) }
+  put env1
+  
+  -- Tag alternatives with proper dependencies and provenance
+  let tagAlternative ix alternative =
+        let altProvenance = case dProv disj of
+              Just prov@ProvTheorem{..} -> 
+                Just prov { fromDisj = Just (dId disj, ix) }
+              other -> other
+            newDeps = S.unions [fDeps alternative, dDeps disj, S.singleton (mkDep (dId disj) ix)]
+        in alternative { fDeps = newDeps, fProv = altProvenance }
+      
+      taggedAlternatives = zipWith tagAlternative [0..] (dAlts disj)
+  
+  -- Insert each alternative using insertFactM to trigger new applications
+  mapM_ insertFactM taggedAlternatives
+  
   let subs = case dProv disj of
                Just ProvTheorem{provSubs = Just s} -> s
                _ -> M.empty
@@ -92,86 +153,125 @@ insertDisjM disj = do
     , teDeps = dDeps disj
     , teSubs = subs
     }]
-  return alts
+  return taggedAlternatives
 
--- More correct semi-naive evaluation
--- This is tricky to get right. A simpler, correct version:
--- At least one fact must be from `new`.
--- This is not the most efficient implementation, but it is more obviously correct
--- than a complex recursive definition.
-generateTuples :: Eq a => Int -> [a] -> [a] -> [[a]]
-generateTuples k old new =
-  let allFacts = old ++ new
-      allTuples = replicateM k allFacts
-      hasNew factTuple = any (`elem` new) factTuple
-  in filter hasNew allTuples
-
--- Single proof step
-stepRoundM :: ProverM ()
-stepRoundM = do
-  engine <- ask
-  env0 <- get
-  
-  -- Increment round counter
-  let env1 = env0 { eRound = eRound env0 + 1 }
-  put env1
-  
-  dtrace ("Round: " ++ show (eRound env1)) $ return ()
-
-  if S.null (eFrontier env1)
-    then put env1 { eFrontier = S.empty }
+-- Single proof step (now the main loop)
+proveLoop :: ProverM ()
+proveLoop = do
+  env <- get
+  let contradictionFound = any isContradiction (eFacts env)
+  if contradictionFound
+    then do
+      let contraFact = fromMaybe (error "contradiction not found") $ S.lookupMin $ S.filter isContradiction (eFacts env)
+      when (S.null (fDeps contraFact)) $ do
+        tell [TraceFactInserted 
+          { teThm = "DEBUG"
+          , teFact = mkFactP PFalse []
+          , teParentDeps = S.empty
+          , teParents = []
+          , teSubs = M.fromList [("contradiction_found", "true")]
+          }]
+      when (S.null (fDeps contraFact)) $ return () -- Halt on true contradiction
+      when (not (S.null (fDeps contraFact))) proveLoop -- Continue if it was a branch contradiction
     else do
-      let oldFacts = S.toList (S.difference (eFacts env1) (eFrontier env1))
-          newFacts = S.toList (eFrontier env1)
+      case H.view (eAppQueue env) of
+        Nothing -> do
+          tell [TraceFactInserted 
+            { teThm = "DEBUG"
+            , teFact = mkFactP PFalse []
+            , teParentDeps = S.empty
+            , teParents = []
+            , teSubs = M.fromList [("queue_empty", "true"), ("total_facts", show (S.size (eFacts env)))]
+            }]
+          return () -- Queue is empty, we are done
+        Just ((cost, app), newQueue) -> do
+          put env { eAppQueue = newQueue }
           
-      -- Find all theorem applications
-      let findApplications theorem@Theorem{..} =
-            let Template patterns = tTemplate
-                
-                -- Generate candidate tuples for each pattern
-                candidatesPerPattern = map (getMatchingFacts oldFacts newFacts) patterns
-                
-                -- Combine candidates ensuring at least one `new` fact is used
-                candidateTuples = combineCandidates candidatesPerPattern
+          tell [TraceFactInserted 
+            { teThm = "DEBUG"
+            , teFact = mkFactP PFalse []
+            , teParentDeps = S.empty
+            , teParents = []
+            , teSubs = M.fromList [("applying", appThmName app), ("cost", show cost)]
+            }]
+          
+          -- Apply the theorem
+          applyTheoremOutput app
+          
+          -- Continue loop
+          proveLoop
 
-      -- Find all theorem applications
-      let findApplications theorem@Theorem{..} =
-            let Template patterns = tTemplate
-                tupleSize = length patterns
-                candidateTuples = generateTuples tupleSize oldFacts newFacts
-            in concatMap (tryApplyTheorem theorem) candidateTuples
-          
-          tryApplyTheorem Theorem{..} tuple = 
-            case matchTemplate tuple tTemplate of
-              Left _ -> []
-              Right substitution ->
-                let concreteTuple = map (substFact substitution) tuple
-                    parentDeps = S.unions (map fDeps concreteTuple)
-                    outputs = tApply concreteTuple
-                in map (\out -> (tName, out, parentDeps, concreteTuple, substitution)) outputs
-      
-      let allApplications = concatMap findApplications (thms engine)
-      
-      -- Apply each theorem result
-      mapM_ applyTheoremOutput allApplications
-      
-      -- Update frontier
-      finalEnv <- get
-      put finalEnv { eFrontier = S.difference (eFacts finalEnv) (eFacts env1) }
+-- Find new applications for a fact and add them to the queue
+updateQueueWithNewFact :: Fact -> ProverM ()
+updateQueueWithNewFact newFact = do
+  engine <- ask
+  env <- get
+  let facts = S.toList (eFacts env)
+  
+  let findApps thm@Theorem{..} =
+        let TTemplate patterns = tTemplate
+            k = length patterns
+            factsByPredName = M.fromListWith (++) [(predToString (fPred f), [f]) | f <- facts]
+            -- For each position where newFact could fit
+            tuplesThatIncludeNewFact = 
+              [ tuple
+              | i <- [0..k-1]
+              , let patternAtI = patterns !! i
+              , predToString (fPred newFact) == tpName patternAtI  -- newFact matches pattern at position i
+              , let otherPatterns = take i patterns ++ drop (i+1) patterns
+              , let otherCandidates = [ M.findWithDefault [] (tpName p) factsByPredName | p <- otherPatterns ]
+              , otherFacts <- cartesian otherCandidates
+              , let tuple = take i otherFacts ++ [newFact] ++ drop i otherFacts
+              , length tuple == k
+              ]
+        in if k == 0
+           then []
+           else [(thm, tuple) | tuple <- tuplesThatIncludeNewFact]
+  
+  let allPotentialApps = concatMap findApps (thms engine)
+  
+  let newApps = concatMap (uncurry tryApplyTheorem) allPotentialApps
+  
+  let newQueue = foldl (\q (cost, app) -> H.insert (cost, app) q) (eAppQueue env) newApps
+  put env { eAppQueue = newQueue }
+
+tryApplyTheorem :: Theorem -> [Fact] -> [(Int, App)]
+tryApplyTheorem thm@Theorem{..} tuple =
+  case matchTemplate tuple tTemplate of
+    Left _ -> []
+    Right substitution ->
+      let concreteTuple = map (substFact substitution) tuple
+          parentDeps = S.unions (map fDeps concreteTuple)
+          outputs = tApply concreteTuple
+      in map (outputToApp parentDeps concreteTuple substitution) outputs
+  where
+    outputToApp deps parents subs out =
+      let app = App
+            { appThmName = tName
+            , appOutput  = out
+            , appDeps    = deps
+            , appParents = parents
+            , appSubs    = subs
+            }
+      in (tCost, app)
+
+isContradiction :: Fact -> Bool
+isContradiction (Fact (PFalse) _ _ _) = True
+isContradiction _ = False
 
 -- Apply a single theorem output
-applyTheoremOutput :: (String, ThmOut, S.Set Dep, [Fact], Subst) -> ProverM ()
-applyTheoremOutput (theoremName, output, parentDeps, parents, substitution) =
-  case output of
+applyTheoremOutput :: App -> ProverM ()
+applyTheoremOutput App{..} =
+  case appOutput of
     TOFact fact -> do
       materializedFacts <- materializeWildcardsM [fact]
       let factWithProvenance = (head materializedFacts) 
-            { fDeps = parentDeps
+            { fDeps = appDeps
             , fProv = Just ProvTheorem 
-                { thmName = theoremName
-                , parentFacts = parents
+                { thmName = appThmName
+                , parentFacts = appParents
                 , fromDisj = Nothing
-                , provSubs = Just substitution
+                , provSubs = Just appSubs
                 }
             }
       _ <- insertFactM factWithProvenance
@@ -180,27 +280,87 @@ applyTheoremOutput (theoremName, output, parentDeps, parents, substitution) =
     TODisj alternatives -> do
       materializedAlts <- materializeWildcardsM alternatives
       env <- get
-      let canonAlt f = fName f ++ "(" ++ intercalate "," (fArgs f) ++ ")"
+      let canonAlt f = predToString (fPred f) ++ "(" ++ intercalate "," (map renderValue (fArgs f)) ++ ")"
           label = Just $ "{" ++ intercalate " | " (map canonAlt materializedAlts) ++ "}"
           disj = Disj 
             { dId = eNextDid env
             , dAlts = materializedAlts
-            , dDeps = parentDeps
+            , dDeps = appDeps
             , dProv = Just ProvTheorem 
-                { thmName = theoremName
-                , parentFacts = parents
+                { thmName = appThmName
+                , parentFacts = appParents
                 , fromDisj = Nothing
-                , provSubs = Just substitution
+                , provSubs = Just appSubs
                 }
             , dLabel = label
             }
-      _ <- insertDisjM disj
+      alts <- insertDisjM disj
+      -- When a disjunction is added, its alternatives are also added as facts.
+      -- The `insertFactM` call for them will trigger `updateQueueWithNewFact`.
       env' <- get
       put env' { eNextDid = eNextDid env' + 1 }
 
+-- Materialize wildcards within the ProverM monad
 materializeWildcardsM :: [Fact] -> ProverM [Fact]
 materializeWildcardsM facts = do
   env <- get
   let (facts', env') = materializeWildcards facts env
   put env'
   return facts'
+
+-- Main entry point for running the prover
+runProver :: Engine -> Env -> (Env, [TraceEvent])
+runProver engine env =
+  let (_, finalEnv, trace) = runRWS proveLoop engine env
+  in (finalEnv, trace)
+
+-- Initial population of the queue
+initialPopulateQueue :: ProverM ()
+initialPopulateQueue = do
+  engine <- ask
+  env <- get
+  let facts = S.toList (eFacts env)
+      factsByPredName = M.fromListWith (++) [(predToString (fPred f), [f]) | f <- facts]
+  
+  tell [TraceFactInserted 
+    { teThm = "DEBUG"
+    , teFact = mkFactP PFalse [] -- dummy fact for debug
+    , teParentDeps = S.empty
+    , teParents = []
+    , teSubs = M.fromList [("initial_facts", show (length facts))]
+    }]
+  
+  -- Generate all possible theorem applications from existing facts
+  let allApps = concatMap (generateAllApplications factsByPredName) (thms engine)
+  let newQueue = foldl (\q (cost, app) -> H.insert (cost, app) q) (eAppQueue env) allApps
+  
+  tell [TraceFactInserted 
+    { teThm = "DEBUG"
+    , teFact = mkFactP PFalse [] -- dummy fact for debug
+    , teParentDeps = S.empty
+    , teParents = []
+    , teSubs = M.fromList [("initial_apps", show (length allApps))]
+    }]
+  
+  put env { eAppQueue = newQueue }
+
+-- Generate all possible applications of a theorem given available facts
+generateAllApplications :: M.Map String [Fact] -> Theorem -> [(Int, App)]
+generateAllApplications factsByPredName thm@Theorem{..} =
+  let TTemplate patterns = tTemplate
+      k = length patterns
+      candidates = [ M.findWithDefault [] (tpName p) factsByPredName | p <- patterns ]
+  in if k == 0
+     then []
+     else concatMap (tryApplyTheorem thm) (cartesian candidates)
+
+-- Helper for combinations
+combinations :: Int -> [a] -> [[a]]
+combinations 0 _ = [[]]
+combinations _ [] = []
+combinations k (x:xs) = map (x:) (combinations (k-1) xs) ++ combinations k xs
+
+-- Helper for cartesian product
+cartesian :: [[a]] -> [[a]]
+cartesian [] = [[]]
+cartesian (x:xs) = [y:ys | y <- x, ys <- cartesian xs]

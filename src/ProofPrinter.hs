@@ -9,16 +9,27 @@ import Data.List (intercalate, sort, sortOn)
 import Data.Maybe (fromMaybe)
 import Control.Monad.State.Strict (State, evalState, get, put)
 
-import Types
-
+import Types ( Fact(..)
+             , Pred(..)
+             , Value(..)
+             , Env(..)
+             , Dep(..)
+             , Disj(..)
+            , Provenance(..)
+            , Subst
+            , predToString
+            , renderValue
+            , mkDep
+            , depDisjInt
+            , depAltInt
+             )
 -- | Helper function for cartesian product  
 cartesian :: [[a]] -> [[a]]
 cartesian [] = [[]]
 cartesian (xs:xss) = [x:ys | x <- xs, ys <- cartesian xss]
 
--- | Pretty print a fact
 prettyFact :: Fact -> String
-prettyFact (Fact name args _ _) = name ++ "(" ++ intercalate ", " args ++ ")"
+prettyFact (Fact p args _ _) = predToString p ++ "(" ++ intercalate ", " (map renderValue args) ++ ")"
 
 -- | Pretty print a substitution
 prettySubst :: Subst -> String
@@ -32,7 +43,7 @@ prettySubst subst =
 findGoalInstances :: Env -> Fact -> [Fact]
 findGoalInstances Env{..} goal =
   [f | f <- S.toList eFacts, 
-       fName f == fName goal, 
+       fPred f == fPred goal, 
        fArgs f == fArgs goal]
 
 -- | Extract proof tree for a specific fact
@@ -168,7 +179,7 @@ pickBestContradiction env instances =
       hasEmbed :: Fact -> Int
       hasEmbed t =
         let node = buildProofTreeMemo env t 10
-            mentionsEmbeds = containsName node (\n -> n == "embedsInSym" || n == "alternatingGroup")
+            mentionsEmbeds = containsName node (\n -> n == PEmbedsInSym || n == PAlternatingGroup)
         in if mentionsEmbeds then (0 :: Int) else (1 :: Int)  -- lower is better
       containsName (ProofNode (Fact nm _ _ _) _ parents _) p =
         p nm || any (\ch -> containsName ch p) parents
@@ -246,14 +257,14 @@ printCaseResolution Env{..} disjIds (caseNum, assignment) = do
   let assignSet = S.fromList (zip disjIds assignment)
       caseLabels = [getCaseLabel did idx | (did, idx) <- zip disjIds assignment]
       asDeps = S.fromList [ mkDep did idx | (did, idx) <- S.toList assignSet]
-      validFacts = [f | f <- sortOn (\f -> (fName f, fArgs f)) (S.toList eFacts), 
+      validFacts = [f | f <- sortOn (\f -> (predToString (fPred f), map renderValue (fArgs f))) (S.toList eFacts), 
                         fDeps f `S.isSubsetOf` asDeps]
-      contradictions = [f | f <- validFacts, fName f == "false"]
+      contradictions = [f | f <- validFacts, fPred f == PFalse]
       -- Prefer contradictions that involve embeddings/alternating in their derivation
       scoreContr :: Fact -> (Int, Int, Int)
       scoreContr f =
         let tree = buildProofTreeMemo Env{..} f 12
-            mentionsEmbed = containsName tree (\nm -> nm == "embedsInSym" || nm == "alternatingGroup")
+            mentionsEmbed = containsName tree (\nm -> nm == PEmbedsInSym || nm == PAlternatingGroup)
             topName = case fProv f of
                         Just ProvTheorem{..} -> thmName
                         _ -> ""
@@ -266,9 +277,9 @@ printCaseResolution Env{..} disjIds (caseNum, assignment) = do
       bestContr = case contradictions of
                     [] -> Nothing
                     cs -> Just $ snd $ minimumByCmp compare (map (\c -> (scoreContr c, c)) cs)
-  
+
   putStrLn $ "  Case " ++ show (caseNum :: Int) ++ ": " ++ intercalate ", " caseLabels
-  
+
   if maybe False (const True) bestContr
     then do
       let contradiction = fromMaybe (head contradictions) bestContr
@@ -276,7 +287,7 @@ printCaseResolution Env{..} disjIds (caseNum, assignment) = do
       -- Print full derivation for this case
       mapM_ putStrLn $ map ("    " ++) (prettyProofTree (buildProofTreeMemo Env{..} contradiction 12))
     else putStrLn $ "    → No direct contradiction found"
-  
+
   where
     getCaseLabel did idx = case M.lookup did eDisjs of
       Just disj -> if idx < length (dAlts disj)
@@ -295,11 +306,11 @@ dedupDisjunctions Env{..} dids =
         Just Disj{..} -> Just (map (\(Fact nm as _ _) -> (nm, as)) dAlts)
         Nothing -> Nothing
       go acc _ [] = reverse acc
-      go acc (seenKeys :: S.Set [(String,[String])]) (d:ds) =
+      go acc (seenKeys :: S.Set [(Pred, [Value])]) (d:ds) =
         case keyOf d of
           Just k -> if S.member k seenKeys
-                    then go acc seenKeys ds
-                    else go (d:acc) (S.insert k seenKeys) ds
+                     then go acc seenKeys ds
+                     else go (d:acc) (S.insert k seenKeys) ds
           Nothing -> go acc seenKeys ds
   in go [] (S.fromList []) dids
 
