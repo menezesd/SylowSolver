@@ -17,24 +17,7 @@ import           Debug.Trace (trace)
 -- Core data model: Facts, Disjunctions, Dependencies
 --------------------------------------------------------------------------------
 
-data Fact = Fact
-  { fName  :: String
-  , fArgs  :: [String]
-  , fDeps  :: S.Set Dep
-  , fProv  :: Maybe Provenance
-  }
-
-instance Eq Fact where
-  (Fact n1 as1 _ _) == (Fact n2 as2 _ _) = n1 == n2 && as1 == as2
-
-instance Ord Fact where
-  compare (Fact n1 as1 _ _) (Fact n2 as2 _ _) = compare (n1, as1) (n2, as2)
-
-instance Show Fact where
-  show (Fact n as deps prov)
-    | S.null deps = n ++ show as ++ provStr
-    | otherwise   = n ++ show as ++ "  ⟂ deps=" ++ show (S.toList deps) ++ provStr
-    where provStr = maybe "" (("  ⟦" ++) . (++"⟧") . show) prov
+import Types (Fact(..), Pred(..), Value(..), predToString, renderValue)
 
 data Disj = Disj
   { dId    :: Int
@@ -145,7 +128,7 @@ processThmOutsM thmNameParam thmOut parentDeps parents sigma =
     TODisj alts -> do
       alts' <- materializeWildcardsM alts
       env <- get
-      let label = Just $ thmNameParam ++ "(" ++ intercalate ", " (map (\ff -> fName ff ++ show (fArgs ff)) parents) ++ ")"
+  let label = Just $ thmNameParam ++ "(" ++ intercalate ", " (map (\ff -> predToString (fPred ff) ++ show (map renderValue (fArgs ff))) parents) ++ ")"
           disj = Disj { dId = eNextDid env
                       , dAlts = alts'
                       , dDeps = parentDeps
@@ -243,7 +226,7 @@ freshName prefix env@Env{..} = (prefix ++ show eFresh, env { eFresh = eFresh + 1
 materializeWildcards :: [Fact] -> Env -> ([Fact], Env)
 materializeWildcards facts env0 = (map subst facts, env')
   where
-    (env', substs) = foldl step (env0, M.empty) (nub (concatMap fArgs facts))
+  (env', substs) = foldl step (env0, M.empty) (nub (concatMap (map renderValue . fArgs) facts))
     step (e, m) a | isWildcard a = let base = drop 1 a; (nm, e') = freshName (if null base then "X" else base ++ "_") e in (e', M.insert a nm m) | otherwise = (e, m)
     subst (Fact n as deps prov) = Fact n (map (\x -> M.findWithDefault x x substs) as) deps prov
 
@@ -316,7 +299,7 @@ defaultEngine = Engine [ sylowTheorem, uniqueSylowContradiction, embedIntoAn, or
 
 proved :: Engine -> Env -> Fact -> Bool
 proved Engine{..} Env{..} goalPat =
-  let instances = [ fct | fct <- S.toList eFacts, fName fct == fName goalPat, fArgs fct == fArgs goalPat]
+  let instances = [ fct | fct <- S.toList eFacts, fPred fct == fPred goalPat, fArgs fct == fArgs goalPat]
       allDeps = S.unions (map fDeps instances)
       disjIds = S.toList (S.map fst allDeps)
       arities = map (\did -> (did, length (fromMaybe [] (fmap dAlts (M.lookup did eDisjs))))) disjIds
@@ -356,7 +339,7 @@ runProver eng hyps goal = do
 
 findGoalAssignments :: Engine -> Env -> Fact -> [[(Int,Int)]]
 findGoalAssignments _eng env@Env{..} goalPat =
-  let instances = [ fct | fct <- S.toList eFacts, fName fct == fName goalPat, fArgs fct == fArgs goalPat]
+  let instances = [ fct | fct <- S.toList eFacts, fPred fct == fPred goalPat, fArgs fct == fArgs goalPat]
       allDeps = S.unions (map fDeps instances)
       disjIds = S.toList (S.map fst allDeps)
       arities = map (\did -> (did, length (fromMaybe [] (fmap dAlts (M.lookup did eDisjs))))) disjIds
@@ -368,7 +351,7 @@ findGoalAssignments _eng env@Env{..} goalPat =
 
 findMatchingInstance :: Env -> Fact -> [(Int,Int)] -> Maybe Fact
 findMatchingInstance Env{..} goalFact assign =
-  let instances = [ fct | fct <- S.toList eFacts, fName fct == fName goalFact, fArgs fct == fArgs goalFact]
+  let instances = [ fct | fct <- S.toList eFacts, fPred fct == fPred goalFact, fArgs fct == fArgs goalFact]
       assignSet = S.fromList assign
   in case [ i | i <- instances, fDeps i `S.isSubsetOf` assignSet ] of
        (x:_) -> Just x
@@ -413,7 +396,7 @@ prettyPrintProof eng env@Env{..} goalPat = do
 -- New variant: returns updated PrintState, assigns numbers to facts and prints cross-refs
 printFactRec' :: Env -> Fact -> [(Int,Int)] -> Int -> S.Set String -> PrintState -> IO PrintState
 printFactRec' env fact assign indent visited pst =
-  let key = fName fact ++ show (fArgs fact) ++ show (S.toList (fDeps fact))
+  let key = predToString (fPred fact) ++ show (map renderValue (fArgs fact)) ++ show (S.toList (fDeps fact))
       pad n = replicate (n*2) ' '
   in case M.lookup key (psMap pst) of
        Just n -> do
@@ -471,7 +454,7 @@ printFactRec' env fact assign indent visited pst =
                    ) pst' parents
 
 factPretty :: Fact -> String
-factPretty (Fact n as _ _) = n ++ "(" ++ intercalate ", " as ++ ")"
+factPretty (Fact p as _ _) = predToString p ++ "(" ++ intercalate ", " (map renderValue as) ++ ")"
 
 --------------------------------------------------------------------------------
 -- Examples

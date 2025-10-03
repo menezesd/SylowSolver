@@ -1,0 +1,4 @@
+Up to date
+Attempting: no simple group of order 12
+✗ Prover error: Proof search timed out after 20 rounds
+Error details: TimeoutError 20

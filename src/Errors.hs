@@ -48,8 +48,8 @@ prettyError (ParseError msg) = "Parse Error: " ++ msg
 prettyError (MatchError msg) = "Matching Error: " ++ msg
 prettyError (SubstitutionError msg subst) = 
   "Substitution Error: " ++ msg ++ " with substitution " ++ show subst
-prettyError (TheoremApplicationError thmName' facts) = 
-  "Failed to apply theorem " ++ thmName' ++ " to facts: " ++ show facts
+prettyError (TheoremApplicationError thmName facts) = 
+  "Failed to apply theorem " ++ thmName ++ " to facts: " ++ show facts
 prettyError (EnvironmentError msg) = "Environment Error: " ++ msg
 prettyError (TimeoutError rounds) = 
   "Proof search timed out after " ++ show rounds ++ " rounds"

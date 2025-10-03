@@ -7,7 +7,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Except
 import Control.Monad (mapM)
 import qualified Data.Set as S
--- import Data.List (unfoldr)
+import Data.List (unfoldr)
 
 import Types
 import Errors
@@ -68,21 +68,16 @@ streamTheoremApplications config theorems facts =
 -- | Stream applications for a single theorem  
 streamSingleTheorem :: StreamConfig -> [Fact] -> Theorem -> [(String, ThmOut, S.Set Dep, [Fact], Subst)]
 streamSingleTheorem StreamConfig{..} facts theorem@Theorem{..} =
-  let candidateTuples = take maxTuples $ generateTuplesForTemplate facts (tTemplate)
+  let candidateTuples = take maxTuples $ generateTuplesForTemplate facts tTemplate
       
       tryApply tuple = case matchTemplate tuple tTemplate of
         Right substitution -> 
           let parentDeps = S.unions (map fDeps tuple)
               outputs = tApply tuple
-          in Right [(tName, output, parentDeps, tuple, substitution) | output <- outputs]
-        Left _ -> Left []
+          in [(tName, output, parentDeps, tuple, substitution) | output <- outputs]
+        Left _ -> []
       
-      successfulApplications = concat [ results
-                                      | tuple <- candidateTuples
-                                      , let res = tryApply tuple
-                                      , case res of { Right _ -> True; Left _ -> False }
-                                      , let Right results = res ]
-  in successfulApplications
+  in concatMap tryApply candidateTuples
 
 -- | Chunked processing for memory efficiency
 processInChunks :: StreamConfig -> [a] -> (a -> ProverM b) -> ProverM [b]
