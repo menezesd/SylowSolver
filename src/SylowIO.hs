@@ -9,14 +9,12 @@ import qualified Data.Set as S
 
 import Types
 import Errors
-import Prover -- Changed from PureProver
+import PureProver
 import Theorems
 import Streaming
 import ProofPrinter
 import System.Environment (lookupEnv)
 import DebugLog (setDebugEnabled)
-
-import Control.Monad.RWS.Strict (runRWS)
 
 -- | Configuration for the solver
 data SolverConfig = SolverConfig
@@ -32,14 +30,14 @@ defaultSolverConfig = SolverConfig False 100 True defaultStreamConfig
 -- | Create hypotheses for testing simple groups
 createHypotheses :: Integer -> [Fact]
 createHypotheses n = 
-  [ (mkFactP PGroup [Sym "G"]) { fProv = Just ProvHypothesis }
-  , (mkFactP POrder [Sym "G", Nat n]) { fProv = Just ProvHypothesis }
-  , (mkFactP PSimple [Sym "G"]) { fProv = Just ProvHypothesis }
+  [ Fact "group" ["G"] S.empty (Just ProvHypothesis)
+  , Fact "order" ["G", show n] S.empty (Just ProvHypothesis)
+  , Fact "simple" ["G"] S.empty (Just ProvHypothesis)
   ]
 
 -- | The goal fact (contradiction)
 goalFalse :: Fact
-goalFalse = mkFactP PFalse []
+goalFalse = Fact "false" [] S.empty Nothing
 
 -- | Run a proof attempt with proper error handling
 runProofAttempt :: SolverConfig -> Integer -> IO ()
@@ -52,49 +50,38 @@ runProofAttempt config@SolverConfig{..} n = do
   
   let hypotheses = createHypotheses n
       goal = goalFalse
-      env0 = Env 
-        { eFacts = S.fromList hypotheses
-        , eDisjs = mempty
-        , eFrontier = S.fromList hypotheses -- Initially, all facts are new
-        , eAppQueue = mempty
-        , eNextDid = 0
-        , eFresh = 0
-        }
-      ((), envWithQueue, initTrace) = runRWS initialPopulateQueue (Engine standardTheorems solverMaxRounds 0) env0
-      (finalEnv, trace) = runProver (Engine standardTheorems solverMaxRounds 0) envWithQueue
-      proofResult = 
-        if any Prover.isContradiction (S.toList (eFacts finalEnv))
-          then Right True
-          else Right False
-          
-  -- Debug output
-  when dbg $ do
-    putStrLn $ "DEBUG: Initial trace events: " ++ show (length initTrace)
-    mapM_ (putStrLn . ("INIT: " ++) . show) initTrace
-    putStrLn $ "DEBUG: Main trace events: " ++ show (length trace)
-    mapM_ (putStrLn . ("MAIN: " ++) . show) (take 20 trace) -- Limit to avoid spam
+      env0 = foldr addHypothesis emptyEnv hypotheses
+      
+      addHypothesis hyp env = 
+        case runProverM (insertFact hyp) env of
+          (Right _, env') -> env'
+          (Left err, env') -> 
+            if verbose then error $ "Error adding hypothesis: " ++ prettyError err
+                      else env'
+  
+  -- Choose proof strategy based on configuration
+  let proofResult = if useStreaming
+        then runProverM (streamingProofSearch streamConfig standardTheorems goal) env0
+        else runProverM (proveGoal standardTheorems goal solverMaxRounds) env0
+  
   case proofResult of
-        Right True -> do
-          putStrLn "✓ CONTRADICTION derived (goal proven)."
-          
-          -- Print the actual proof
-          printProof finalEnv (head (filter Prover.isContradiction (S.toList (eFacts finalEnv))))
-          
-          when verbose $ do
-            putStrLn $ "\nFinal environment has " ++ show (S.size (eFacts finalEnv)) ++ " facts"
-            putStrLn $ "Generated " ++ show (length (eDisjs finalEnv)) ++ " disjunctions"
-            -- printProofStats finalEnv -- This function might need updates
-        
-        Right False -> 
-          putStrLn "✗ Could not derive contradiction."
-        
-        Left err -> do
-          putStrLn $ "✗ Prover error: " ++ prettyError err
-          when verbose $ putStrLn $ "Error details: " ++ show err
-
-isContradiction :: Fact -> Bool
-isContradiction (Fact (PFalse) _ _ _) = True
-isContradiction _ = False
+    (Right True, finalEnv) -> do
+      putStrLn "✓ CONTRADICTION derived (goal proven)."
+      
+      -- Print the actual proof
+      printProofWithCases finalEnv goal
+      
+      when verbose $ do
+        putStrLn $ "\nFinal environment has " ++ show (S.size (eFacts finalEnv)) ++ " facts"
+        putStrLn $ "Generated " ++ show (length (eDisjs finalEnv)) ++ " disjunctions"
+        printProofStats finalEnv
+    
+    (Right False, _) -> 
+      putStrLn "✗ Could not derive contradiction."
+    
+    (Left err, _) -> do
+      putStrLn $ "✗ Prover error: " ++ prettyError err
+      when verbose $ putStrLn $ "Error details: " ++ show err
 
 -- | Parse command line arguments
 parseArgs :: [String] -> (SolverConfig, Maybe Integer)

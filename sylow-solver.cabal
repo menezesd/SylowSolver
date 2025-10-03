@@ -15,22 +15,21 @@ extra-source-files: README.md
 executable sylow-solver
     main-is: Main.hs
     other-modules:
-        DebugLog,
+        Types,
         Errors,
-        Matching,
         Math,
-        ProofPrinter,
-        Prover,
+        Matching,
+        Theorems,
         PureProver,
         Streaming,
         SylowIO,
-        Theorems,
-        Types
+        ProofPrinter,
+        DebugLog
     build-depends:
-      base,
-      containers,
-      mtl,
-      heap
-    hs-source-dirs:   src
+        base >= 4.12 && < 5,
+        containers >= 0.6 && < 0.8,
+        mtl >= 2.2 && < 2.4
+
+    hs-source-dirs: src
     default-language: Haskell2010
     ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
