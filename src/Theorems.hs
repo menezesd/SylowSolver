@@ -569,6 +569,7 @@ standardTheorems =
   , primeOrderCounting
   , orderPkCountingContradiction
   , simpleNotSimple
+  , normalizerCentralizerAutBound
   ]
 
 -- New: If there are n_p Sylow p-subgroups of G, then index(N_G(P)) = n_p
@@ -584,9 +585,36 @@ sylowNormalizerIndex = mkTheoremT "SylowNormalizerIndex"
       | g == g2 && pStr == p2Str && p2Str == p3Str =
           case (safeRead npStr :: ProverResult Integer) of
             Right np ->
-              [ TOFact (mkFactP PIndex [Sym "N", Sym "G", Nat np])
-              , TOFact (mkFactP PSubgroup [Sym "N", Sym "G"])
-              , TOFact (mkFactP PNormalizer [Sym g, Sym "P", Sym "N"])
+              [ TOFact (mkFactP PIndex [Sym "N_G(P)", Sym g, Nat np])
+              , TOFact (mkFactP PSubgroup [Sym "N_G(P)", Sym g])
+              , TOFact (mkFactP PNormalizer [Sym g, Sym "P", Sym "N_G(P)"])
               ]
             _ -> []
     applySylowNormalizerIndex _ = []
+
+-- If P is a Sylow p-subgroup with |P|=p (prime), then [N_G(P):C_G(P)] | (p-1)
+-- We encode this by introducing a centralizer C_G(P) and a disjunction of possible index values k dividing (p-1).
+normalizerCentralizerAutBound :: Theorem
+normalizerCentralizerAutBound = mkTheoremT "NormalizerCentralizerAutBound"
+  (mkTTemplate [ mkTPattern "sylowPSubgroup" [vpVar "P", vpVar "p", vpVar "G"]
+               , mkTPattern "order" [vpVar "P", vpVar "pk"]
+               ])
+  applyNCBound
+  where
+    applyNCBound [Fact _ [pSym,pStr,gSym] _ _, Fact _ [pSym2,pkStr] _ _]
+      | pSym == pSym2 =
+          case (safeRead pStr :: ProverResult Integer, safeRead pkStr :: ProverResult Integer) of
+            (Right p, Right pk) ->
+              if pk == p && p >= 2 && p <= 97 -- keep within small bounds; adjust as needed
+              then let pgMinus1 = p - 1
+                       divisors = [d | d <- [1..pgMinus1], pgMinus1 `mod` d == 0]
+                       idxFacts = [ mkFactP PIndex [Sym "C_G(P)", Sym "N_G(P)", Nat d] | d <- divisors ]
+                   in [ TOFact (mkFactP PCentralizer [Sym gSym, Sym pSym, Sym "C_G(P)"])
+                      ] ++
+                      (case idxFacts of
+                         [] -> []
+                         [single] -> [TOFact single]
+                         multiple -> [TODisj multiple])
+              else []
+            _ -> []
+    applyNCBound _ = []

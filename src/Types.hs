@@ -67,6 +67,7 @@ data Pred
   | PSubgroup
   | PIndex
   | PNormalizer
+  | PCentralizer
   | PNormal
   | PSimple
   | PNotSimple
@@ -102,6 +103,7 @@ predToString p = case p of
   PSubgroup -> "subgroup"
   PIndex -> "index"
   PNormalizer -> "normalizer"
+  PCentralizer -> "centralizer"
   PNormal -> "normal"
   PSimple -> "simple"
   PNotSimple -> "notSimple"
@@ -127,6 +129,7 @@ parsePred s = case s of
   "subgroup" -> Just PSubgroup
   "index" -> Just PIndex
   "normalizer" -> Just PNormalizer
+  "centralizer" -> Just PCentralizer
   "normal" -> Just PNormal
   "simple" -> Just PSimple
   "notSimple" -> Just PNotSimple
