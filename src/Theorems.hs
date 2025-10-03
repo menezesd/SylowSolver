@@ -467,6 +467,25 @@ tagNormalizerOfSylowIntersection = mkTheoremT "TagNormalizerOfSylowIntersection"
             _ -> []
     applyTag _ = []
 
+-- Rule out max_sylow_intersection values that are inconsistent with n_p
+ruleOutMaxIntersections :: Theorem
+ruleOutMaxIntersections = mkTheoremT "RuleOutMaxIntersections"
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "np"]
+               , mkTPattern "maxSylowIntersection" [vpVar "G", vpVar "p", vpVar "pl"]
+               , mkTPattern "sylowOrder" [vpVar "G", vpVar "p", vpVar "pk"]
+               ])
+  applyRuleOutMax
+  where
+    applyRuleOutMax [Fact _ [pStr, g, npStr] _ _, Fact _ [g2, p2Str, plStr] _ _, Fact _ [g3, p3Str, pkStr] _ _]
+      | g == g2 && g2 == g3 && pStr == p2Str && p2Str == p3Str =
+        case (safeRead npStr :: ProverResult Integer, safeRead plStr :: ProverResult Integer, safeRead pkStr :: ProverResult Integer) of
+          (Right np, Right pl, Right pk) ->
+            if pk > pl && pl > 0 && np `mod` (pk `div` pl) /= 1
+            then [TOFact (mkFactP PFalse [])]
+            else []
+          _ -> []
+    applyRuleOutMax _ = []
+
 -- Rule out normalizer-of-intersection orders that force unique Sylow p-subgroup in T
 ruleOutNormalizerOfIntersectionOrder :: Theorem
 ruleOutNormalizerOfIntersectionOrder = mkTheoremT "RuleOutNormalizerOfIntersectionOrder"
@@ -481,42 +500,15 @@ ruleOutNormalizerOfIntersectionOrder = mkTheoremT "RuleOutNormalizerOfIntersecti
           let a = highestPowerDividing p k
               pk = p ^ a
               m = if pk == 0 then 0 else k `div` pk
-              divisors = case allDivisors m of { Right ds -> ds; Left _ -> [] }
-              candidates = [d | d <- divisors, d `mod` p == 1]
-          in if candidates == [1]
-               then [TOFact (mkFactP PFalse [])]
-               else []
+          in case allDivisors m of
+               Right divisors ->
+                 let candidates = [d | d <- divisors, d `mod` p == 1]
+                 in if length candidates == 1 && head candidates == 1
+                      then [TOFact (mkFactP PFalse [])]
+                      else []
+               Left _ -> []
         _ -> []
     applyRuleOut _ = []
-
--- Rule out impossible normalizer orders: if normalizer forces unique Sylow subgroup, contradiction
-normalizerOrderContradiction :: Theorem
-normalizerOrderContradiction = mkTheoremT "NormalizerOrderContradiction"
-  (mkTTemplate [ mkTPattern "normalizer" [vpVar "G", vpVar "H", vpVar "N"]
-               , mkTPattern "order" [vpVar "N", vpVar "k"]
-               , mkTPattern "order" [vpVar "G", vpVar "n"]
-               ])
-  applyNormalizerOrderContradiction
-  where
-    applyNormalizerOrderContradiction [Fact _ [g1,_,n1] _ _, Fact _ [n2,kStr] _ _, Fact _ [g2,nStr] _ _]
-      | g1 == g2 && n1 == n2 =
-        case (safeRead kStr :: ProverResult Integer, safeRead nStr :: ProverResult Integer) of
-          (Right k, Right n) ->
-            -- If normalizer has small index, we get embedding into small alternating group
-            let index = n `div` k
-            in if index > 1 && index <= 4  -- Small index forces small alternating group
-               then [ TOFact (mkFactP PSubgroup [Sym g1, Sym "A"]) 
-                    , TOFact (mkFactP PAlternatingGroup [Sym "A", Nat index])
-                    , TOFact (mkFactP PDivides [Nat n,
-                          case factorial index of
-                            Right fact_n -> Nat (fact_n `div` 2)
-                            Left _ -> Nat 1])
-                    ]
-               else []
-          _ -> []
-    applyNormalizerOrderContradiction _ = []
-
--- Legacy conversion theorems were removed; the prover uses typed encodings exclusively.
 
 -- Enhanced counting for prime-order Sylow subgroups: when Sylow p-subgroups have prime order p, 
 -- they intersect trivially, giving (p-1) * num_sylows elements of order p
@@ -575,139 +567,27 @@ simpleNotSimple = mkTheoremT "SimpleNotSimple"
       | otherwise = []
     applySimpleNotSimple _ = []
 
-
-
--- Note: a previous possibleAn rule depending on legacy is(G, Sn) was removed; it could be reintroduced with typed facts if needed.
-
-
 -- Standard theorem collection
 standardTheorems :: [Theorem]
-standardTheorems = 
+standardTheorems =
   [ sylowTheorem
-  , uniqueSylowContradiction  
-  , sylowPSubgroupGeneration
-  , actionOnSylowSubgroups
-  , actionEmbedsInSym
-  -- legacy conversions removed
-  , orderDividesSym
-  , orderDividesAlt
-  , sylowNormalizerIndex
-  , countOrderPkElements
-  , countingContradiction
+  , uniqueSylowContradiction
+  , simpleNotSimple
+  , alternatingOrder
   , lagrangeTheorem
   , divisibilityContradiction
   , alternatingGroupSimple
   , subgroupIndex
-  , subgroupIndexForT
   , cosetAction
-  , sylowForSubgroupOrder
   , simpleGroupAction
+  , countOrderPkElements
+  , countingContradiction
   , multipleSylows
-  , alternatingOrder
-  , normalSubgroupNotSimple
   , possibleMaxIntersections
   , intersectionOfSylows
-  , normalizerImpliesNormal
   , normalizerSylowIntersection
-  , tagNormalizerOfSylowIntersection
+  , normalizerImpliesNormal
+  , normalSubgroupNotSimple
+  , ruleOutMaxIntersections
   , ruleOutNormalizerOfIntersectionOrder
-  , normalizerOrderContradiction
-  , primeOrderCounting
-  , orderPkCountingContradiction
-  , simpleNotSimple
-  , normalizerCentralizerAutBound
   ]
-
--- New: If there are n_p Sylow p-subgroups of G, then index(N_G(P)) = n_p
--- We record index(N,P) = n_p as a fact, and if order(G,n) and order(P,p) with p prime, we can derive order of normalizer divides n with index n_p
-sylowNormalizerIndex :: Theorem
-sylowNormalizerIndex = mkTheoremT "SylowNormalizerIndex"
-  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n_p"]
-               , mkTPattern "sylowPSubgroup" [vpVar "P", vpVar "p", vpVar "G"]
-               ])
-  applySylowNormalizerIndex
-  where
-    applySylowNormalizerIndex [Fact _ [pStr,g,npStr] _ _, Fact _ [p2Str,p3Str,g2] _ _]
-      | g == g2 && pStr == p2Str && p2Str == p3Str =
-          case (safeRead npStr :: ProverResult Integer) of
-            Right np ->
-              [ TOFact (mkFactP PIndex [Sym "N_G(P)", Sym g, Nat np])
-              , TOFact (mkFactP PSubgroup [Sym "N_G(P)", Sym g])
-              , TOFact (mkFactP PNormalizer [Sym g, Sym "P", Sym "N_G(P)"])
-              ]
-            _ -> []
-    applySylowNormalizerIndex _ = []
-
--- If P is a Sylow p-subgroup with |P|=p (prime), then [N_G(P):C_G(P)] | (p-1)
--- We encode this by introducing a centralizer C_G(P) and a disjunction of possible index values k dividing (p-1).
-normalizerCentralizerAutBound :: Theorem
-normalizerCentralizerAutBound = mkTheoremT "NormalizerCentralizerAutBound"
-  (mkTTemplate [ mkTPattern "sylowPSubgroup" [vpVar "P", vpVar "p", vpVar "G"]
-               , mkTPattern "order" [vpVar "P", vpVar "pk"]
-               ])
-  applyNCBound
-  where
-    applyNCBound [Fact _ [pSym,pStr,gSym] _ _, Fact _ [pSym2,pkStr] _ _]
-      | pSym == pSym2 =
-          case (safeRead pStr :: ProverResult Integer, safeRead pkStr :: ProverResult Integer) of
-            (Right p, Right pk) ->
-              if pk == p && p >= 2 && p <= 97 -- keep within small bounds; adjust as needed
-              then let pgMinus1 = p - 1
-                       divisors = [d | d <- [1..pgMinus1], pgMinus1 `mod` d == 0]
-                       idxFacts = [ mkFactP PIndex [Sym "C_G(P)", Sym "N_G(P)", Nat d] | d <- divisors ]
-                   in [ TOFact (mkFactP PCentralizer [Sym gSym, Sym pSym, Sym "C_G(P)"])
-                      ] ++
-                      (case idxFacts of
-                         [] -> []
-                         [single] -> [TOFact single]
-                         multiple -> [TODisj multiple])
-              else []
-            _ -> []
-    applyNCBound _ = []
-
--- Derive index(T in G) = n/k from subgroup(T,G), order(G,n), order(T,k)
-subgroupIndexForT :: Theorem
-subgroupIndexForT = mkTheoremT "SubgroupIndexForT"
-  (mkTTemplate [ mkTPattern "subgroup" [vpVar "T", vpVar "G"]
-               , mkTPattern "order" [vpVar "G", vpVar "n"]
-               , mkTPattern "order" [vpVar "T", vpVar "k"]
-               ])
-  applyIdx
-  where
-    applyIdx [Fact _ [t,g] _ _, Fact _ [g2,nStr] _ _, Fact _ [t2,kStr] _ _]
-      | t == t2 && g == g2 =
-          case (safeRead nStr :: ProverResult Integer, safeRead kStr :: ProverResult Integer) of
-            (Right n, Right k) -> if k > 0 && n `mod` k == 0
-                                   then [TOFact (mkFactP PIndex [Sym t, Sym g, Nat (n `div` k)])]
-                                   else []
-            _ -> []
-    applyIdx _ = []
-
--- Sylow constraints inside a subgroup T given order(T,k)
-sylowForSubgroupOrder :: Theorem
-sylowForSubgroupOrder = mkTheoremT "SylowForSubgroupOrder"
-  (mkTTemplate [ mkTPattern "order" [vpVar "T", vpVar "k"] ])
-  applySylowT
-  where
-    applySylowT [Fact _ [t,kStr] _ _] =
-      case safeRead kStr of
-        Right k -> case primeFactorization k of
-          Right factors -> concatMap (mkSylowFacts t k) factors
-          Left _ -> []
-        Left _ -> []
-    applySylowT _ = []
-
-    mkSylowFacts t k (p, e) =
-      let pk = p ^ e
-          m = k `div` pk
-          orderFact = TOFact (mkFactP PSylowOrder [Sym t, Nat p, Nat pk])
-      in case allDivisors m of
-           Right divisors ->
-             let validCounts = [d | d <- divisors, d `mod` p == 1]
-                 mkNum d = mkFactP PNumSylow [Nat p, Sym t, Nat d]
-                 countConstraint = case validCounts of
-                   [] -> TOFact (mkFactP PFalse [])
-                   [single] -> TOFact (mkNum single)
-                   multiple -> TODisj (map mkNum multiple)
-             in [orderFact, countConstraint]
-           Left _ -> [TOFact (mkFactP PFalse [])]

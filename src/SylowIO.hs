@@ -25,7 +25,7 @@ data SolverConfig = SolverConfig
   } deriving (Show)
 
 defaultSolverConfig :: SolverConfig
-defaultSolverConfig = SolverConfig False 100 True defaultStreamConfig
+defaultSolverConfig = SolverConfig False 500 True defaultStreamConfig
 
 -- | Create hypotheses for testing simple groups
 createHypotheses :: Integer -> [Fact]

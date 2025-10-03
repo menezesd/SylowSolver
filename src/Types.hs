@@ -225,6 +225,7 @@ data Env = Env
   , eFrontier :: S.Set Fact
   , eNextDid  :: Int
   , eFresh    :: Int
+  , eRound    :: Int
   } deriving (Show)
 
 -- Engine configuration

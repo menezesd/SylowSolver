@@ -5,6 +5,7 @@ import qualified Data.Set as S
 import Data.Maybe (fromMaybe)
 import Data.List (intercalate, (\\))
 
+import DebugLog (dtrace)
 import Types
 import Matching
 
@@ -13,7 +14,7 @@ type ProverM = RWS Engine [TraceEvent] Env
 
 -- Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty 0 0
+emptyEnv = Env S.empty M.empty S.empty 0 0 0
 
 insertFact :: Fact -> Env -> (Env, Bool)
 insertFact fact env@Env{..}
@@ -93,15 +94,17 @@ insertDisjM disj = do
     }]
   return alts
 
--- Generate tuples for semi-naive evaluation
-incrementalTuples :: Int -> [a] -> [a] -> [[a]]
-incrementalTuples 0 _ _ = [[]]
-incrementalTuples k old new =
-  -- Tuples with a new fact at the head
-  [n : rest | n <- new, rest <- replicateM (k-1) (old ++ new)]
-  ++
-  -- Tuples with an old fact at the head, and at least one new fact in the tail
-  [o : rest | o <- old, rest <- incrementalTuples (k-1) old new]
+-- More correct semi-naive evaluation
+-- This is tricky to get right. A simpler, correct version:
+-- At least one fact must be from `new`.
+-- This is not the most efficient implementation, but it is more obviously correct
+-- than a complex recursive definition.
+generateTuples :: Eq a => Int -> [a] -> [a] -> [[a]]
+generateTuples k old new =
+  let allFacts = old ++ new
+      allTuples = replicateM k allFacts
+      hasNew factTuple = any (`elem` new) factTuple
+  in filter hasNew allTuples
 
 -- Single proof step
 stepRoundM :: ProverM ()
@@ -109,18 +112,33 @@ stepRoundM = do
   engine <- ask
   env0 <- get
   
-  if S.null (eFrontier env0)
-    then put env0 { eFrontier = S.empty }
+  -- Increment round counter
+  let env1 = env0 { eRound = eRound env0 + 1 }
+  put env1
+  
+  dtrace ("Round: " ++ show (eRound env1)) $ return ()
+
+  if S.null (eFrontier env1)
+    then put env1 { eFrontier = S.empty }
     else do
-      let oldFacts = S.toList (S.difference (eFacts env0) (eFrontier env0))
-          newFacts = S.toList (eFrontier env0)
+      let oldFacts = S.toList (S.difference (eFacts env1) (eFrontier env1))
+          newFacts = S.toList (eFrontier env1)
           
       -- Find all theorem applications
       let findApplications theorem@Theorem{..} =
             let Template patterns = tTemplate
+                
+                -- Generate candidate tuples for each pattern
+                candidatesPerPattern = map (getMatchingFacts oldFacts newFacts) patterns
+                
+                -- Combine candidates ensuring at least one `new` fact is used
+                candidateTuples = combineCandidates candidatesPerPattern
+
+      -- Find all theorem applications
+      let findApplications theorem@Theorem{..} =
+            let Template patterns = tTemplate
                 tupleSize = length patterns
-                -- Use incremental tuples for semi-naive evaluation
-                candidateTuples = incrementalTuples tupleSize oldFacts newFacts
+                candidateTuples = generateTuples tupleSize oldFacts newFacts
             in concatMap (tryApplyTheorem theorem) candidateTuples
           
           tryApplyTheorem Theorem{..} tuple = 
@@ -139,7 +157,7 @@ stepRoundM = do
       
       -- Update frontier
       finalEnv <- get
-      put finalEnv { eFrontier = S.difference (eFacts finalEnv) (eFacts env0) }
+      put finalEnv { eFrontier = S.difference (eFacts finalEnv) (eFacts env1) }
 
 -- Apply a single theorem output
 applyTheoremOutput :: (String, ThmOut, S.Set Dep, [Fact], Subst) -> ProverM ()

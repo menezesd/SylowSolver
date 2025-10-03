@@ -14,6 +14,7 @@ import Data.List (intercalate)
 import Types
 import Errors  
 import Matching
+import DebugLog (dtrace)
 -- | Generate candidate tuples that match pattern fact names (prunes search drastically)
 generateTuplesForTemplate :: [Fact] -> TTemplate -> [[Fact]]
 generateTuplesForTemplate facts (TTemplate patterns) =
@@ -37,7 +38,7 @@ runProverM (ProverM computation) env = runState (runExceptT computation) env
 
 -- | Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty 0 0
+emptyEnv = Env S.empty M.empty S.empty 0 0 0
 
 -- | Pure fact insertion
 insertFact :: Fact -> ProverM Bool  
@@ -151,12 +152,18 @@ stepRound :: [Theorem] -> ProverM Bool
 stepRound theorems = do
   env0 <- get
   
-  if S.null (eFrontier env0)
+  -- Increment round counter
+  let env1 = env0 { eRound = eRound env0 + 1 }
+  put env1
+  
+  dtrace ("Round: " ++ show (eRound env1)) $ return ()
+
+  if S.null (eFrontier env1)
     then do
       modify (\env -> env { eFrontier = S.empty })
       return False
     else do
-      let factsList = S.toList (eFacts env0)
+      let factsList = S.toList (eFacts env1)
       
       -- Simple theorem applications with pruned tuple enumeration by fact names
       let tryOne theorem =
@@ -176,7 +183,7 @@ stepRound theorems = do
       
       -- Update frontier
       finalEnv <- get
-      modify (\env -> env { eFrontier = S.difference (eFacts finalEnv) (eFacts env0) })
+      modify (\env -> env { eFrontier = S.difference (eFacts finalEnv) (eFacts env1) })
       return hasWork
   where
     processApplication hasWork (theoremName, output, parentDeps, parents, substitution) = do
