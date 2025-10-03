@@ -598,7 +598,9 @@ standardTheorems =
   , divisibilityContradiction
   , alternatingGroupSimple
   , subgroupIndex
+  , subgroupIndexForT
   , cosetAction
+  , sylowForSubgroupOrder
   , simpleGroupAction
   , multipleSylows
   , alternatingOrder
@@ -662,3 +664,50 @@ normalizerCentralizerAutBound = mkTheoremT "NormalizerCentralizerAutBound"
               else []
             _ -> []
     applyNCBound _ = []
+
+-- Derive index(T in G) = n/k from subgroup(T,G), order(G,n), order(T,k)
+subgroupIndexForT :: Theorem
+subgroupIndexForT = mkTheoremT "SubgroupIndexForT"
+  (mkTTemplate [ mkTPattern "subgroup" [vpVar "T", vpVar "G"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               , mkTPattern "order" [vpVar "T", vpVar "k"]
+               ])
+  applyIdx
+  where
+    applyIdx [Fact _ [t,g] _ _, Fact _ [g2,nStr] _ _, Fact _ [t2,kStr] _ _]
+      | t == t2 && g == g2 =
+          case (safeRead nStr :: ProverResult Integer, safeRead kStr :: ProverResult Integer) of
+            (Right n, Right k) -> if k > 0 && n `mod` k == 0
+                                   then [TOFact (mkFactP PIndex [Sym t, Sym g, Nat (n `div` k)])]
+                                   else []
+            _ -> []
+    applyIdx _ = []
+
+-- Sylow constraints inside a subgroup T given order(T,k)
+sylowForSubgroupOrder :: Theorem
+sylowForSubgroupOrder = mkTheoremT "SylowForSubgroupOrder"
+  (mkTTemplate [ mkTPattern "order" [vpVar "T", vpVar "k"] ])
+  applySylowT
+  where
+    applySylowT [Fact _ [t,kStr] _ _] =
+      case safeRead kStr of
+        Right k -> case primeFactorization k of
+          Right factors -> concatMap (mkSylowFacts t k) factors
+          Left _ -> []
+        Left _ -> []
+    applySylowT _ = []
+
+    mkSylowFacts t k (p, e) =
+      let pk = p ^ e
+          m = k `div` pk
+          orderFact = TOFact (mkFactP PSylowOrder [Sym t, Nat p, Nat pk])
+      in case allDivisors m of
+           Right divisors ->
+             let validCounts = [d | d <- divisors, d `mod` p == 1]
+                 mkNum d = mkFactP PNumSylow [Nat p, Sym t, Nat d]
+                 countConstraint = case validCounts of
+                   [] -> TOFact (mkFactP PFalse [])
+                   [single] -> TOFact (mkNum single)
+                   multiple -> TODisj (map mkNum multiple)
+             in [orderFact, countConstraint]
+           Left _ -> [TOFact (mkFactP PFalse [])]
