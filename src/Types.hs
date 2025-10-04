@@ -65,6 +65,7 @@ data Pred
   | PDivides
   | PFalse
   | PTransitiveAction
+  | PFaithfulAction
   | PSubgroup
   | PIndex
   | PNormalizer
@@ -73,6 +74,7 @@ data Pred
   | PNotSimple
   | PIs
   | PNormalizerOfSylowIntersection
+  | PHallSubgroup
   deriving (Eq, Ord, Show)
 
 -- Typed Fact placeholder for gradual migration
@@ -101,6 +103,7 @@ predToString p = case p of
   PDivides -> "divides"
   PFalse -> "false"
   PTransitiveAction -> "transitiveAction"
+  PFaithfulAction -> "faithfulAction"
   PSubgroup -> "subgroup"
   PIndex -> "index"
   PNormalizer -> "normalizer"
@@ -109,6 +112,7 @@ predToString p = case p of
   PNotSimple -> "notSimple"
   PIs -> "is"
   PNormalizerOfSylowIntersection -> "normalizerOfSylowIntersection"
+  PHallSubgroup -> "hallSubgroup"
 
 parsePred :: String -> Maybe Pred
 parsePred s = case s of
@@ -127,6 +131,7 @@ parsePred s = case s of
   "divides" -> Just PDivides
   "false" -> Just PFalse
   "transitiveAction" -> Just PTransitiveAction
+  "faithfulAction" -> Just PFaithfulAction
   "subgroup" -> Just PSubgroup
   "index" -> Just PIndex
   "normalizer" -> Just PNormalizer
@@ -135,6 +140,7 @@ parsePred s = case s of
   "notSimple" -> Just PNotSimple
   "is" -> Just PIs
   "normalizerOfSylowIntersection" -> Just PNormalizerOfSylowIntersection
+  "hallSubgroup" -> Just PHallSubgroup
   _ -> Nothing
 
 -- Value render/parse helpers
@@ -233,6 +239,8 @@ data Env = Env
   , eNextDid   :: Int
   , eFresh     :: Int
   , eClosedAlts :: S.Set (Int, Int) -- (DisjId, AltIx) pairs that have been closed by contradiction
+  , eFactIndex :: M.Map (Pred, [Value]) Fact  -- canonical index to merge duplicates ignoring deps/prov
+  , eDisjIndex :: M.Map String Int            -- canonical disjunction signature -> disjunction id
   } deriving (Show)
 
 -- Engine configuration

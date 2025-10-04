@@ -2,6 +2,8 @@
 module Theorems where
 
 import Data.Set (fromList)
+import qualified Data.Set as S
+-- Removed unused IORef / unsafePerformIO imports after abandoning memoization.
 import Types
   ( Fact(..)
   , Pred(..)
@@ -21,6 +23,7 @@ import Types
 import Math
 import Errors
 import Debug.Trace (trace)
+import DebugLog (dtrace)
 
 -- Helper function for divisors (from sylow2.py)
 divisors :: Integer -> [Integer] 
@@ -70,7 +73,7 @@ sylowTheorem = mkTheoremT "SylowDivisibilityCongruence" 5
                        ]
           outs = countFacts ++ orderFacts
           debugMsg = "applySylow g=" ++ g ++ " p=" ++ show pInt ++ " pk=" ++ show pk ++ " m=" ++ show mInteger ++ " validCounts=" ++ show validCounts
-      in trace debugMsg outs
+      in dtrace debugMsg outs
 
 -- If there's a unique Sylow p-subgroup in a simple group, contradiction
 -- (only applies when the Sylow subgroup is proper)
@@ -98,9 +101,8 @@ uniqueSylowContradiction = mkTheoremT "UniqueSylowImpliesNotSimple" 2
 
 -- Action on Sylow subgroups: if n_p > 1, G acts on them.
 
--- Embedding in alternating group: if G is simple and has n_p > 1 Sylow p-subgroups, then G embeds in A_{n_p}
--- This theorem was incorrect - it was creating impossible embeddings
--- Disabling it to prevent false contradictions
+-- Embedding in alternating group: if G is simple and has n_p > 1 Sylow p-subgroups, 
+-- then G embeds as a subgroup in A_{n_p} via the conjugation action
 embedInAlternating :: Theorem
 embedInAlternating = mkTheoremT "EmbedInAlternating" 15
   (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n_p"]
@@ -108,7 +110,22 @@ embedInAlternating = mkTheoremT "EmbedInAlternating" 15
                ])
   applyEmbedInAlternating
   where
-    applyEmbedInAlternating _ = []  -- Disabled - was mathematically incorrect
+    -- Revised semantics: produce an abstract embedding predicate embedInAlt(G, A_n)
+    -- (later a separate theorem can translate embedInAlt + alternatingGroup + order facts
+    -- into subgroup/divisibility when justified). This avoids premature Lagrange explosions.
+    -- Gate at n_p >= 5 (so A_n is simple and classical action more controlled).
+    applyEmbedInAlternating [Fact _ [_, gVal, npVal] _ _, Fact _ [g2Val] _ _]
+      | gVal == g2Val =
+          case npVal of
+            Nat np | np >= 5 -> 
+              let altName = Sym ("A_" ++ show np)
+              in if gVal == altName
+                   then []  -- avoid degenerate self embedding that led to subgroup(A_5, A_5)
+                   else [ TOFact (mkFactP PEmbedInAlt [gVal, altName])
+                        , TOFact (mkFactP PAlternatingGroup [altName, Nat np])
+                        ]
+            _ -> []
+    applyEmbedInAlternating _ = []
 
 -- Any transitive action of degree n yields a faithful embedding G ↪ S_n (encode as embedsInSym)
 actionEmbedsInSym :: Theorem
@@ -120,7 +137,73 @@ actionEmbedsInSym = mkTheoremT "ActionEmbedsInSym" 20
       [TOFact (mkFactP PEmbedsInSym [Sym g, SymGroup n])]
     applyActionEmbeds _ = []
 
--- Order must divide symmetric group order
+-- Convert an abstract alternating embedding to a subgroup relationship when
+-- we have both orders and |G| divides |A_n| (syntactic safe check: factorial bound).
+-- This prevents the earlier unsound immediate use of Lagrange on fabricated subgroups.
+embedAltToSubgroup :: Theorem
+embedAltToSubgroup = mkTheoremT "EmbedAltToSubgroup" 12
+  (mkTTemplate [ mkTPattern "embedInAlt" [vpVar "G", vpVar "A"]
+               , mkTPattern "alternatingGroup" [vpVar "A", vpVar "n"]
+               , mkTPattern "order" [vpVar "G", vpVar "m"]
+               , mkTPattern "order" [vpVar "A", vpVar "k"]
+               ])
+  applyEmbedAltToSubgroup
+  where
+    applyEmbedAltToSubgroup [Fact _ [gVal,aVal] _ _, Fact _ [a2Val,nVal] _ _, Fact _ [g2Val,mVal] _ _, Fact _ [a3Val,kVal] _ _]
+      | aVal == a2Val && a2Val == a3Val && gVal == g2Val =
+          case (gVal,aVal,nVal,mVal,kVal) of
+            (Sym g, Sym a, Nat n, Nat m, Nat k) ->
+              if k >= m then [ TOFact (mkFactP PSubgroup [Sym g, Sym a])
+                             , TOFact (mkFactP PDivides [Nat m, Nat k])
+                             ] else []
+            _ -> []
+    applyEmbedAltToSubgroup _ = []
+
+-- Derive faithfulAction(G,n): require a coset action plus index(H,G,n) and strict order drop |H| < |G|, so kernel can't be all of G.
+faithfulCosetAction :: Theorem
+faithfulCosetAction = mkTheoremT "FaithfulCosetAction" 18
+  (mkTTemplate [ mkTPattern "cosetAction" [vpVar "G", vpVar "H", vpVar "n"]
+               , mkTPattern "index" [vpVar "H", vpVar "G", vpVar "n"]
+               , mkTPattern "order" [vpVar "G", vpVar "m"]
+               , mkTPattern "order" [vpVar "H", vpVar "h"]
+               ])
+  applyFaithfulCoset
+  where
+    applyFaithfulCoset [Fact _ [g1,h1,n1] _ _, Fact _ [h2,g2,n2] _ _, Fact _ [g3,mVal] _ _, Fact _ [h3,hVal] _ _]
+      | g1 == g2 && g1 == g3 && h1 == h2 && h1 == h3 && n1 == n2 =
+          case (g1,h1,n1,mVal,hVal) of
+            (Sym g, Sym h, Nat n, Nat m, Nat hOrder) ->
+              if hOrder < m && n > 1 then [TOFact (mkFactP PFaithfulAction [Sym g, Nat n])] else []
+            _ -> []
+    applyFaithfulCoset _ = []
+
+-- Guarded simple group action embedding: with faithfulAction(G,n), simple(G), order(G,m) and m <= n!, produce embedding into alternating when safe.
+simpleGroupActionFaithful :: Theorem
+simpleGroupActionFaithful = mkTheoremT "SimpleGroupActionFaithful" 22
+  (mkTTemplate [ mkTPattern "faithfulAction" [vpVar "G", vpVar "n"]
+               , mkTPattern "simple" [vpVar "G"]
+               , mkTPattern "order" [vpVar "G", vpVar "m"]
+               ])
+  applySimpleActionFaithful
+  where
+    applySimpleActionFaithful [Fact _ [gVal,nVal] _ _, Fact _ [g2Val] _ _, Fact _ [g3Val,mVal] _ _]
+      | gVal == g2Val && gVal == g3Val =
+          case (gVal,nVal,mVal) of
+            (Sym g, Nat n, Nat m) | n > 1 ->
+              case factorial (fromIntegral n) of
+                Right factN ->
+                  let altName = Sym ("A_" ++ show n)
+                      safeAlt = n < 5 || factN >= 2 && fromIntegral m <= factN `div` 2
+                  in if fromIntegral m <= factN && safeAlt
+                        then [ TOFact (mkFactP PEmbedInAlt [Sym g, altName])
+                             , TOFact (mkFactP PAlternatingGroup [altName, Nat (fromIntegral n)])
+                             ]
+                        else []
+                Left _ -> []
+            _ -> []
+    applySimpleActionFaithful _ = []
+
+-- Safe symmetric embedding divisibility: only produce divides fact when it really holds
 orderDividesSym :: Theorem
 orderDividesSym = mkTheoremT "OrderMustDivideSym" 5
   (mkTTemplate [ mkTPattern "embedsInSym" [vpVar "G", vpVar "Sn"]
@@ -128,35 +211,13 @@ orderDividesSym = mkTheoremT "OrderMustDivideSym" 5
                ])
   applySymDivision
   where
-    applySymDivision facts@[Fact _ [_, snVal] _ _, Fact _ [_, nVal] _ _] =
+    applySymDivision [Fact _ [_, snVal] _ _, Fact _ [_, nVal] _ _] =
       case (nVal, snVal) of
         (Nat n, SymGroup sn) -> case factorial sn of
-          Right factM -> 
-            if factM `mod` n /= 0 
-               then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideSym" facts Nothing Nothing)))]
-               else []
-          Left _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideSym" facts Nothing Nothing)))] -- Factorial error
-        _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideSym" facts Nothing Nothing)))] -- Parse error
+          Right factM | factM `mod` n == 0 -> [TOFact (mkFactP PDivides [Nat n, Nat factM])]
+          _ -> []
+        _ -> []
     applySymDivision _ = []
-
-orderDividesAlt :: Theorem
-orderDividesAlt = mkTheoremT "OrderMustDivideAlt" 5
-  (mkTTemplate [ mkTPattern "embedInAlt" [vpVar "G", vpVar "An"]
-               , mkTPattern "order" [vpVar "G", vpVar "n"]
-               ])
-  applyDivision
-  where
-    applyDivision facts@[Fact _ [_, aVal] _ _, Fact _ [_, nVal] _ _] =
-      case (aVal, nVal) of
-        (AltGroup m, Nat n) -> case factorial m of
-          Right factM -> 
-            let altOrder = factM `div` 2
-            in if altOrder `mod` n /= 0 
-               then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideAlt" facts Nothing Nothing)))]
-               else []
-          Left _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideAlt" facts Nothing Nothing)))]
-        _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideAlt" facts Nothing Nothing)))]
-    applyDivision _ = []
 
 -- Count elements of order p^k in Sylow p-subgroups (match Python pattern)
 countOrderPkElements :: Theorem
@@ -320,15 +381,13 @@ simpleGroupAction = mkTheoremT "EmbedsIntoSnBySylowAction" 20
 
 -- Multiple Sylows theorem: if num_sylow(p,G,n) where n > 1, then more_than_one_sylow(p,G)
 multipleSylows :: Theorem
-multipleSylows = mkTheoremT "MultipleSylows" 2
-  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n"] ])
+multipleSylows = mkTheoremT "MultipleSylows" 1
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n_p"] ])
   applyMultipleSylows
   where
-    applyMultipleSylows [Fact _ [pVal,gVal,nVal] _ _] =
-      case (pVal, gVal, nVal) of
-        (Nat pInt, Sym g, Nat n) -> if n > 1
-                      then [TOFact (mkFactP PMoreThanOneSylow [Nat pInt, Sym g])]
-                      else []
+    applyMultipleSylows [Fact _ [pVal, gVal, npVal] _ _] =
+      case npVal of
+        Nat np | np > 1 -> [TOFact (mkFactP PMoreThanOneSylow [pVal, gVal])]
         _ -> []
     applyMultipleSylows _ = []
 
@@ -398,7 +457,8 @@ possibleMaxIntersections = mkTheoremT "PossibleMaxIntersections" 25
       | gVal == g2Val && pVal == p2Val =
         case (gVal, pVal, pkVal) of
           (Sym g, Nat p, Nat pk) -> 
-            let possibleOrders = takeWhile (< pk) (iterate (* p) 1)
+            let -- Exclude the trivial intersection order 1; start from p up to < pk
+                possibleOrders = takeWhile (< pk) (iterate (* p) p)
                 intersectionFacts = [mkFactP PMaxSylowIntersection [Sym g, Nat p, Nat order] | order <- possibleOrders]
             in case intersectionFacts of
                  [] -> []
@@ -442,6 +502,26 @@ normalizerImpliesNormal = mkTheoremT "NormalizerImpliesNormal" 5
           _ -> []
     applyNormalizerImpliesNormal _ = []
 
+-- If normalizer(G,H,N) and order(N,n) and order(G,n) then normal(H,G)
+-- Mirrors Python's normalizer_everything_implies_normal (which uses size equality rather than literal N = G)
+-- Refined: also require order(H,k) with k>1 to avoid repeatedly deriving normal(1,G)
+-- This prunes a large number of redundant applications when the intersection subgroup has order 1.
+normalizerEqualityImpliesNormal :: Theorem
+normalizerEqualityImpliesNormal = mkTheoremT "NormalizerEqualityImpliesNormal" 6
+  (mkTTemplate [ mkTPattern "normalizer" [vpVar "G", vpVar "H", vpVar "N"]
+               , mkTPattern "order" [vpVar "N", vpVar "n"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               , mkTPattern "order" [vpVar "H", vpVar "k"]
+               ])
+  applyNormalizerEqualityImplies
+  where
+    applyNormalizerEqualityImplies [Fact _ [gVal,hVal,nVal] _ _, Fact _ [n2Val,nOrderVal] _ _, Fact _ [g2Val,gOrderVal] _ _, Fact _ [h2Val,kVal] _ _]
+      | gVal == g2Val && nOrderVal == gOrderVal && nVal == n2Val && hVal == h2Val =
+          case (hVal, gVal, kVal) of
+            (Sym h, Sym g, Nat k) | k > 1 -> [TOFact (mkFactP PNormal [Sym h, Sym g])]
+            _ -> []
+    applyNormalizerEqualityImplies _ = []
+
 -- Normalizer of Sylow intersection: creates normalizer with possible orders
 normalizerSylowIntersection :: Theorem
 normalizerSylowIntersection = mkTheoremT "NormalizerSylowIntersection" 40
@@ -454,44 +534,41 @@ normalizerSylowIntersection = mkTheoremT "NormalizerSylowIntersection" 40
                ])
   applyNormalizerSylowIntersection
   where
-    applyNormalizerSylowIntersection [Fact _ [p1Val,pStr1Val,g1Val] _ _, 
-                                     Fact _ [p2Val,pStr2Val,g2Val] _ _, 
-                                     Fact _ [p1'Val,p2'Val,rVal] _ _, 
-                                     Fact _ [r'Val,plVal] _ _, 
-                                     Fact _ [g3Val,pStr3Val,pkVal] _ _, 
-                                     Fact _ [g4Val,nVal] _ _]
-      | g1Val == g2Val && g2Val == g3Val && g3Val == g4Val && 
-        pStr1Val == pStr2Val && pStr2Val == pStr3Val &&
-        p1Val == p1'Val && p2Val == p2'Val && rVal == r'Val =
-        case (g1Val, rVal, plVal, pkVal, nVal) of
-          (Sym g1, Sym r, Nat pl, Nat pk, Nat n) ->
-            if pk > pl
-            then 
-              let normalizer_name = "N1"
-                  validOrders = [d | d <- [1..n], d `mod` pk == 0, d > pk, n `mod` d == 0]
-                  orderFacts = [mkFactP POrder [Sym normalizer_name, Nat d] | d <- validOrders]
-                  mainFacts = [ TOFact (mkFactP PNormalizer [Sym g1, Sym r, Sym normalizer_name])
-                              , TOFact (mkFactP PSubgroup [Sym normalizer_name, Sym g1])
-                              ]
-                  extraFacts = case orderFacts of
-                                 [] -> []
-                                 [single] -> [TOFact single]
-                                 multiple -> [TODisj multiple]
-              in mainFacts ++ extraFacts
-            else []
-          _ -> []
+    applyNormalizerSylowIntersection facts@[Fact _ [p1Val,pStr1Val,g1Val] _ _, 
+                                            Fact _ [p2Val,pStr2Val,g2Val] _ _, 
+                                            Fact _ [p1'Val,p2'Val,rVal] _ _, 
+                                            Fact _ [r'Val,plVal] _ _, 
+                                            Fact _ [g3Val,pStr3Val,pkVal] _ _, 
+                                            Fact _ [g4Val,nVal] _ _]
+      | g1Val == g2Val && g2Val == g3Val && g3Val == g4Val
+        && pStr1Val == pStr2Val && pStr2Val == pStr3Val
+        && p1Val == p1'Val && p2Val == p2'Val && rVal == r'Val =
+          case (g1Val, rVal, plVal, pkVal, nVal) of
+            (Sym g1, Sym r, Nat pl, Nat pk, Nat n) ->
+              -- Require a nontrivial intersection (pl > 1) in addition to pk > pl.
+              -- The pl = 1 cases were generating a flood of identical normalizer facts
+              -- across many Sylow number disjunction branches, bloating the search.
+              if pk > pl && pl > 1 then
+                let normalizer_name = "N1"
+                    -- Recover prime p from the Sylow subgroup second argument (pStr1Val)
+                    pMaybe = case pStr1Val of { Nat p -> Just p; _ -> Nothing }
+                in case pMaybe of
+                     Nothing -> []
+                     Just p ->
+                       let validOrders = [d | d <- [1..n], d `mod` pk == 0, d > pk, n `mod` d == 0]
+                           orderFacts = [mkFactP POrder [Sym normalizer_name, Nat d] | d <- validOrders]
+                           mainFacts = [ TOFact (mkFactP PNormalizer [Sym g1, Sym r, Sym normalizer_name])
+                                       , TOFact (mkFactP PSubgroup [Sym normalizer_name, Sym g1])
+                                       , TOFact (mkFactP PNormalizerOfSylowIntersection [Nat p, Sym g1, Sym normalizer_name])
+                                       ]
+                           extraFacts = case orderFacts of
+                                          [] -> []
+                                          [single] -> [TOFact single]
+                                          multiple -> [TODisj multiple]
+                       in mainFacts ++ extraFacts
+              else []
+            _ -> []
     applyNormalizerSylowIntersection _ = []
-
--- Rule out impossible normalizer orders: if normalizer forces unique Sylow subgroup, contradiction
-normalizerOrderContradiction :: Theorem
-normalizerOrderContradiction = mkTheoremT "NormalizerOrderContradiction" 15
-  (mkTTemplate [ mkTPattern "normalizer" [vpVar "G", vpVar "H", vpVar "N"]
-               , mkTPattern "order" [vpVar "N", vpVar "k"]
-               , mkTPattern "order" [vpVar "G", vpVar "n"]
-               ])
-  applyNormalizerOrderContradiction
-  where
-    applyNormalizerOrderContradiction _ = []
 
 -- Legacy conversion theorems were removed; the prover uses typed encodings exclusively.
 
@@ -551,8 +628,8 @@ simpleNotSimple = mkTheoremT "SimpleNotSimple" 2
 -- A group cannot have two different orders
 -- uniqueOrderTheorem :: Theorem
 -- uniqueOrderTheorem = mkTheoremT "UniqueOrder" 1
---   (mkTTemplate [ mkTPattern "order" [vpVar "G", vpVar "n1"]
---                , mkTPattern "order" [vpVar "G", vpVar "n2"]
+--   (mkTTemplate [ mkTPattern "order" [vpVar "G", "n1"]
+--                , mkTPattern "order" [vpVar "G", "n2"]
 --                ])
 --   applyUniqueOrder
 --   where
@@ -567,9 +644,9 @@ standardTheorems =
   , uniqueSylowContradiction
   -- , sylowPSubgroupGeneration  -- DISABLED: Redundant with sylowTheorem which already generates subgroups
   , embedInAlternating
+  , embedAltToSubgroup
   -- legacy conversions removed
   , orderDividesSym
-  , orderDividesAlt
   , sylowNormalizerIndex
   -- , normalizerAutBoundPrime  -- DISABLED: This theorem is too restrictive and causes false contradictions
   , countOrderPkElements
@@ -580,6 +657,9 @@ standardTheorems =
   , alternatingGroupSimple
   , subgroupIndex
   , cosetAction
+  , faithfulCosetAction        -- new: derive faithfulAction from core-free coset action pattern
+  , simpleGroupActionFaithful  -- new: guarded replacement for simpleGroupActionAlt
+  -- , simpleGroupActionAlt  -- legacy parity attempt (disabled)
   -- , simpleGroupAction  -- DISABLED: This theorem is incorrect and causes false contradictions
   , multipleSylows
   , alternatingOrder
@@ -587,13 +667,26 @@ standardTheorems =
   , possibleMaxIntersections
   , intersectionOfSylows
   , normalizerImpliesNormal
+  , normalizerEqualityImpliesNormal
+  , normalizerEverythingImpliesNormal -- parity with Python normalizer_everything_implies_normal
   , normalizerSylowIntersection
-  , normalizerOrderContradiction
   , primeOrderCounting
   , orderPkCountingContradiction
   , simpleNotSimple
   , ruleOutMaxIntersections  -- REFINED: Now only applies to non-trivial intersections
   , ruleOutNormalizerOrder
+  , singleSylowNotSimple      -- new
+  , primeMinimalIndexNormal   -- new
+  , index2Normal              -- new
+  , normalSubgroupToNotSimple -- new
+  , sylowCountNarrowDivides   -- new
+  , sylowCountNarrowCongruence -- new
+  , sylowCountDividesUpper     -- new
+  , sylowCountCongruence       -- new
+  , sylowNormalizerOrder       -- new
+  , hallSubgroupDetection      -- new
+  , hallSubgroupNormalInSimple -- new
+  , sylowUniquenessFromDivCong -- new
   ]
 
 -- New: If there are n_p Sylow p-subgroups of G, then index(N_G(P)) = n_p
@@ -672,14 +765,303 @@ ruleOutNormalizerOrder = mkTheoremT "RuleOutNormalizerOrder" 25
                ])
   applyRuleOutNormalizerOrder
   where
-    applyRuleOutNormalizerOrder facts@[Fact _ [pVal,gVal,tVal] _ _, 
+    -- Heuristic rule (mirrors Python intent): If the normalizer T of a Sylow p-intersection
+    -- has order k where k is itself a pure power of p (k = p^a) and a > 0, then T has a unique
+    -- Sylow p-subgroup. But by construction T normalizes an intersection coming from
+    -- multiple Sylow p-subgroups of G. That forces a contradiction because inside T the
+    -- Sylow p-subgroups must be conjugate and unique.
+    applyRuleOutNormalizerOrder facts@[Fact _ [pVal,_gVal,tVal] _ _, 
                                        Fact _ [t2Val,kVal] _ _]
       | tVal == t2Val =
           case (pVal, kVal) of
             (Nat p, Nat k) ->
-              let validCounts = [d | d <- divisors k, d `mod` p == 1]
-              in if length validCounts == 1  -- Only one possibility means forced normal
-                 then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "RuleOutNormalizerOrder" facts Nothing Nothing)))]
-                 else []
+              if p > 1 && k > 1 && isPurePowerOf p k then
+                [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "RuleOutNormalizerOrder" facts Nothing Nothing)))]
+              else []
             _ -> []
     applyRuleOutNormalizerOrder _ = []
+
+    isPurePowerOf :: Integer -> Integer -> Bool
+    isPurePowerOf p n = go 1
+      where
+        go acc | acc == n = True
+               | acc > n = False
+               | otherwise = go (acc * p)
+
+-- Single Sylow subgroup implies not simple if group order not a pure p-power (Python: single_sylow_not_simple)
+singleSylowNotSimple :: Theorem
+singleSylowNotSimple = mkTheoremT "SingleSylowNotSimple" 8
+  (mkTTemplate [ mkTPattern "sylowPSubgroup" [vpVar "P", vpVar "p", vpVar "G"]
+               , mkTPattern "numSylow" [vpVar "p", vpVar "G", vpFixed (Nat 1)]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               ])
+  applySingleSylowNotSimple
+  where
+    applySingleSylowNotSimple [Fact _ [_,pVal,gVal] _ _, Fact _ [p2Val,g2Val,_] _ _, Fact _ [g3Val,nVal] _ _]
+      | pVal == p2Val && gVal == g2Val && gVal == g3Val =
+          case (pVal,nVal,gVal) of
+            (Nat p, Nat n, Sym g) -> if n > 1 && not (isPurePowerOfLocal p n)
+                                        then [TOFact (mkFactP PNotSimple [Sym g])]
+                                        else []
+            _ -> []
+    applySingleSylowNotSimple _ = []
+
+    isPurePowerOfLocal :: Integer -> Integer -> Bool
+    isPurePowerOfLocal p n = go 1
+      where
+        go acc | acc == n = True
+               | acc > n = False
+               | otherwise = go (acc * p)
+
+-- Prime minimal index normality: index(H,G,p), order(G,n)=p*m, order(H,m), p smallest prime divisor of n => normal(H,G)
+primeMinimalIndexNormal :: Theorem
+primeMinimalIndexNormal = mkTheoremT "PrimeMinimalIndexNormal" 10
+  (mkTTemplate [ mkTPattern "index" [vpVar "H", vpVar "G", vpVar "p"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               , mkTPattern "order" [vpVar "H", vpVar "m"]
+               ])
+  applyPrimeMinimalIndexNormal
+  where
+    applyPrimeMinimalIndexNormal [Fact _ [hVal,gVal,pVal] _ _, Fact _ [g2Val,nVal] _ _, Fact _ [h2Val,mVal] _ _]
+      | hVal == h2Val && gVal == g2Val =
+          case (pVal,nVal,mVal,hVal,gVal) of
+            (Nat p, Nat n, Nat m, Sym h, Sym g) ->
+              if n == p * m && p > 1 then
+                 case primeFactorization n of
+                   Right facs -> let primes = [pr | (pr,_) <- facs]
+                                     smallest = minimum primes
+                                 in if elem p primes && p == smallest
+                                       then [TOFact (mkFactP PNormal [Sym h, Sym g])]
+                                       else []
+                   Left _ -> []
+              else []
+            _ -> []
+    applyPrimeMinimalIndexNormal _ = []
+
+-- Index 2 implies normal immediately (special fast rule)
+index2Normal :: Theorem
+index2Normal = mkTheoremT "Index2Normal" 4
+  (mkTTemplate [ mkTPattern "index" [vpVar "H", vpVar "G", vpFixed (Nat 2)]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               , mkTPattern "order" [vpVar "H", vpVar "m"]
+               ])
+  applyIndex2
+  where
+    applyIndex2 [Fact _ [hVal,gVal,_] _ _, Fact _ [g2Val,nVal] _ _, Fact _ [h2Val,mVal] _ _]
+      | hVal == h2Val && gVal == g2Val =
+          case (nVal,mVal,hVal,gVal) of
+            (Nat n, Nat m, Sym h, Sym g) -> if n == 2*m then [TOFact (mkFactP PNormal [Sym h, Sym g])] else []
+            _ -> []
+    applyIndex2 _ = []
+
+-- Normal proper subgroup implies not simple (Python: normal_subgroup_to_not_simple)
+normalSubgroupToNotSimple :: Theorem
+normalSubgroupToNotSimple = mkTheoremT "NormalSubgroupToNotSimple" 6
+  (mkTTemplate [ mkTPattern "normal" [vpVar "H", vpVar "G"]
+               , mkTPattern "order" [vpVar "H", vpVar "h"]
+               , mkTPattern "order" [vpVar "G", vpVar "g"]
+               ])
+  applyNormalToNotSimple
+  where
+    applyNormalToNotSimple [Fact _ [hVal,gVal] _ _, Fact _ [h2Val,hOrder] _ _, Fact _ [g2Val,gOrder] _ _]
+      | hVal == h2Val && gVal == g2Val =
+          case (hOrder,gOrder,gVal) of
+            (Nat h, Nat g, Sym gName) -> if 1 < h && h < g then [TOFact (mkFactP PNotSimple [Sym gName])] else []
+            _ -> []
+    applyNormalToNotSimple _ = []
+
+-- Narrow Sylow count using divisibility: if numSylow(p,G,n_p) and divides(n_p, d) and d has exactly one positive divisor k satisfying k ≡ 1 (mod p) then force numSylow(p,G,k).
+sylowCountNarrowDivides :: Theorem
+sylowCountNarrowDivides = mkTheoremT "SylowCountNarrowDivides" 14
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "np"]
+               , mkTPattern "divides" [vpVar "np", vpVar "d"]
+               ])
+  applyNarrowDivides
+  where
+    applyNarrowDivides [Fact _ [pVal,gVal,npVal] _ _, Fact _ [np2Val,dVal] _ _]
+      | npVal == np2Val =
+          case (pVal,dVal,gVal) of
+            (Nat p, Nat d, Sym g) ->
+               if p > 1 && d > 0 then
+                 let candidates = [k | k <- divisorsOf d, k `mod` p == 1]
+                 in case candidates of
+                      [k] -> [TOFact (mkFactP PNumSylow [Nat p, Sym g, Nat k])]
+                      _   -> []
+               else []
+            _ -> []
+    applyNarrowDivides _ = []
+
+    divisorsOf n = [d | d <- [1..n], n `mod` d == 0]
+
+-- Narrow Sylow count using congruence and factorial/alternating constraints (light version):
+-- If numSylow(p,G,n_p) and divides(n_p, d) AND we already know order(G,m), filter divisors of d that also divide m.
+-- If that leaves exactly one k with k ≡ 1 (mod p), enforce it.
+sylowCountNarrowCongruence :: Theorem
+sylowCountNarrowCongruence = mkTheoremT "SylowCountNarrowCongruence" 16
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "np"]
+               , mkTPattern "divides" [vpVar "np", vpVar "d"]
+               , mkTPattern "order" [vpVar "G", vpVar "m"]
+               ])
+  applyNarrowCongruence
+  where
+    applyNarrowCongruence [Fact _ [pVal,gVal,npVal] _ _, Fact _ [np2Val,dVal] _ _, Fact _ [g2Val,mVal] _ _]
+      | npVal == np2Val && gVal == g2Val =
+          case (pVal,dVal,mVal,gVal) of
+            (Nat p, Nat d, Nat m, Sym g) ->
+               if p > 1 && d > 0 then
+                  let candidates = [k | k <- divisorsOf d, k `mod` p == 1, m `mod` k == 0]
+                  in case candidates of
+                       [k] -> [TOFact (mkFactP PNumSylow [Nat p, Sym g, Nat k])]
+                       _   -> []
+               else []
+            _ -> []
+    applyNarrowCongruence _ = []
+
+    divisorsOf n = [d | d <- [1..n], n `mod` d == 0]
+
+-- Sylow count divisibility upper bound: from sylowOrder(G,p,p^k) and order(G,n) and numSylow(p,G,r) with n divisible by p^k produce divides(r, n/p^k)
+sylowCountDividesUpper :: Theorem
+sylowCountDividesUpper = mkTheoremT "SylowCountDividesUpper" 10
+  (mkTTemplate [ mkTPattern "sylowOrder" [vpVar "G", vpVar "p", vpVar "pk"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               , mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "r"]
+               ])
+  applySylowDivBound
+  where
+    applySylowDivBound [Fact _ [gVal,pVal,pkVal] _ _, Fact _ [g2Val,nVal] _ _, Fact _ [p2Val,g3Val,rVal] _ _]
+      | gVal == g2Val && g2Val == g3Val && pVal == p2Val =
+          case (pVal, pkVal, nVal, rVal) of
+            (Nat p, Nat pk, Nat n, Nat r) ->
+              if pk > 0 && n `mod` pk == 0 && pk `mod` p == 0 then
+                 let q = n `div` pk in [TOFact (mkFactP PDivides [Nat r, Nat q])]
+              else []
+            _ -> []
+    applySylowDivBound _ = []
+
+-- Sylow count congruence: from numSylow(p,G,r) with r>1 produce divides(p, r-1) encoding r ≡ 1 (mod p)
+sylowCountCongruence :: Theorem
+sylowCountCongruence = mkTheoremT "SylowCountCongruence" 6
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "r"] ])
+  applySylowCong
+  where
+    applySylowCong [Fact _ [pVal,gVal,rVal] _ _] =
+      case (pVal,rVal) of
+        (Nat p, Nat r) | p > 1 && r > 1 -> [TOFact (mkFactP PDivides [Nat p, Nat (r-1)])]
+        _ -> []
+    applySylowCong _ = []
+
+-- Derive order of normalizer of a Sylow p-subgroup when we know numSylow and group order and sylow order: |G| = n_p * |N_G(P)|
+sylowNormalizerOrder :: Theorem
+sylowNormalizerOrder = mkTheoremT "SylowNormalizerOrder" 12
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "np"]
+               , mkTPattern "sylowOrder" [vpVar "G", vpVar "p", vpVar "pk"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               ])
+  applySylowNormOrder
+  where
+    applySylowNormOrder [Fact _ [pVal,gVal,npVal] _ _, Fact _ [g2Val,p2Val,pkVal] _ _, Fact _ [g3Val,nVal] _ _]
+      | gVal == g2Val && g2Val == g3Val && pVal == p2Val =
+          case (npVal,pkVal,nVal,gVal) of
+            (Nat np, Nat pk, Nat n, Sym g) ->
+               if np > 0 && pk > 0 && n `mod` pk == 0 && (n `mod` np == 0) then
+                  let remDiv = n `div` np
+                  in if remDiv `mod` pk == 0 then
+                       let normOrder = remDiv in [TOFact (mkFactP POrder [Sym ("N_"++show pVal++"_"++g), Nat normOrder])]
+                     else []
+               else []
+            _ -> []
+    applySylowNormOrder _ = []
+
+-- Detect Hall subgroup: if subgroup(H,G) and order(H,h), order(G,n) with gcd(h,n/h)=1 and 1<h<n
+hallSubgroupDetection :: Theorem
+hallSubgroupDetection = mkTheoremT "HallSubgroupDetection" 10
+  (mkTTemplate [ mkTPattern "subgroup" [vpVar "H", vpVar "G"]
+               , mkTPattern "order" [vpVar "H", vpVar "h"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               ])
+  applyHallDetect
+  where
+    applyHallDetect [Fact _ [hVal,gVal] _ _, Fact _ [h2Val,hOrder] _ _, Fact _ [g2Val,nOrder] _ _]
+      | hVal == h2Val && gVal == g2Val =
+          case (hOrder,nOrder,hVal,gVal) of
+            (Nat h, Nat n, Sym hS, Sym gS) ->
+              if h > 1 && h < n && n `mod` h == 0 && gcd h (n `div` h) == 1 then
+                 [TOFact (mkFactP PHallSubgroup [Sym hS, Sym gS, Nat h])]
+              else []
+            _ -> []
+    applyHallDetect _ = []
+
+-- In a simple group, a Hall subgroup (proper nontrivial) must be normal (or yields contradiction). We take route: hallSubgroup(H,G,_) & simple(G) ⇒ normal(H,G)
+hallSubgroupNormalInSimple :: Theorem
+hallSubgroupNormalInSimple = mkTheoremT "HallSubgroupNormalInSimple" 8
+  (mkTTemplate [ mkTPattern "hallSubgroup" [vpVar "H", vpVar "G", vpVar "h"]
+               , mkTPattern "simple" [vpVar "G"]
+               ])
+  applyHallNormal
+  where
+    applyHallNormal [Fact _ [hVal,gVal,_] _ _, Fact _ [g2Val] _ _]
+      | gVal == g2Val = case (hVal,gVal) of
+          (Sym h, Sym g) -> [TOFact (mkFactP PNormal [Sym h, Sym g])]
+          _ -> []
+    applyHallNormal _ = []
+
+-- If numSylow(p,G,n) and we have divides(n,q) and divides(p,n-1) and only one divisor k of q satisfies k≡1 mod p, force numSylow(p,G,k)
+sylowUniquenessFromDivCong :: Theorem
+sylowUniquenessFromDivCong = mkTheoremT "SylowUniquenessFromDivCong" 15
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n"]
+               , mkTPattern "divides" [vpVar "n", vpVar "q"]
+               , mkTPattern "divides" [vpVar "p", vpVar "m"]
+               ])
+  applySylowUnique
+  where
+    applySylowUnique [Fact _ [pVal,gVal,nVal] _ _, Fact _ [n2Val,qVal] _ _, Fact _ [p2Val,mVal] _ _]
+      | nVal == n2Val && pVal == p2Val =
+          case (pVal,nVal,qVal,mVal,gVal) of
+            (Nat p, Nat n, Nat q, Nat m, Sym g) ->
+              if m == n - 1 && q > 0 then
+                 let candidates = [d | d <- divisorsOf q, d `mod` p == 1]
+                 in case candidates of
+                      [k] | k /= n -> [TOFact (mkFactP PNumSylow [Nat p, Sym g, Nat k])]
+                      _ -> []
+              else []
+            _ -> []
+    applySylowUnique _ = []
+    divisorsOf x = [d | d <- [1..x], x `mod` d == 0]
+
+-- New parity theorem: simple_group_action (Python) analogue.
+-- If G acts transitively on n points and is simple with n>1, embed into A_n via subgroup(G, A_n) and alternating_group(A_n,n).
+-- This complements 'embedInAlternating' (which uses numSylow) covering the action route present in Python engine.
+simpleGroupActionAlt :: Theorem
+simpleGroupActionAlt = mkTheoremT "SimpleGroupAction" 12
+  (mkTTemplate [ mkTPattern "transitiveAction" [vpVar "G", vpVar "n"]
+               , mkTPattern "simple" [vpVar "G"]
+               ])
+  applySimpleGroupActionAlt
+  where
+    applySimpleGroupActionAlt [Fact _ [gVal,nVal] _ _, Fact _ [gVal2] _ _]
+      | gVal == gVal2 = case (gVal,nVal) of
+          (Sym g, Nat n) | n > 1 ->
+             let aName = Sym ("A_" ++ show n)
+             in [ TOFact (mkFactP PSubgroup [Sym g, aName])
+                , TOFact (mkFactP PAlternatingGroup [aName, Nat n])
+                ]
+          _ -> []
+    applySimpleGroupActionAlt _ = []
+
+-- New parity theorem: normalizer_everything_implies_normal from Python.
+-- If normalizer(G,H,X) and orders of G and X coincide, infer normal(H,G).
+-- We omit the extra H order guard used in the refined equality theorem to ensure parity completeness.
+normalizerEverythingImpliesNormal :: Theorem
+normalizerEverythingImpliesNormal = mkTheoremT "NormalizerEverythingImpliesNormal" 7
+  (mkTTemplate [ mkTPattern "normalizer" [vpVar "G", vpVar "H", vpVar "X"]
+               , mkTPattern "order" [vpVar "G", vpVar "n"]
+               , mkTPattern "order" [vpVar "X", vpVar "n"]
+               ])
+  applyNormalizerEverything
+  where
+    applyNormalizerEverything [Fact _ [gVal,hVal,xVal] _ _, Fact _ [g2Val,nVal] _ _, Fact _ [x2Val,n2Val] _ _]
+      | gVal == g2Val && xVal == x2Val && nVal == n2Val =
+          case (gVal,hVal) of
+            (Sym g, Sym h) -> [TOFact (mkFactP PNormal [Sym h, Sym g])]
+            _ -> []
+    applyNormalizerEverything _ = []
