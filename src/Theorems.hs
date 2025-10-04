@@ -700,7 +700,7 @@ standardTheorems =
   , multiSylowPk2Counting       -- new: improved p^2 multi-Sylow element counting lower bound
   , orderPkCountingContradiction
   , simpleNotSimple
-  , ruleOutMaxIntersections  -- REFINED: Now only applies to non-trivial intersections
+  -- , ruleOutMaxIntersections  -- DISABLED: Too restrictive, causes false contradiction for PSL(2,7) at order 168
   , ruleOutNormalizerOrder
   , singleSylowNotSimple      -- new
   , primeMinimalIndexNormal   -- new
