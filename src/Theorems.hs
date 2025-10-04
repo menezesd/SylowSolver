@@ -594,13 +594,9 @@ primeOrderCounting = mkTheoremT "PrimeOrderCounting" 10
     applyPrimeOrderCounting _ = []
 
 
--- Multiple Sylow counting for order p^2: conservative lower bound.
--- If sylowOrder(G,p,pk) with pk = p^2, numSylow(p,G,n) and n>1, then each Sylow p-subgroup
--- contributes (p^2 - p) new elements beyond a shared intersection of size p in the worst case.
--- Distinct p-elements in that shared intersection contribute (p-1). Thus total distinct
--- non-identity p-power elements >= (p-1) + n*(p^2 - p). We record a lower bound including
--- identity as (p-1) + n*(p^2 - p) (identity is not counted in POrderPkLowerBound semantics
--- elsewhere, which already use (p-1)*n for prime order; we stay consistent by NOT adding +1).
+-- Multiple Sylow counting for non-prime order: matches Python conservative bound.
+-- Python logic: if pk == p (prime order), use (p-1)*n_p. Otherwise, if n_p == 1, use pk-1, else use pk.
+-- This is much more conservative than our previous aggressive formula.
 multiSylowPk2Counting :: Theorem
 multiSylowPk2Counting = mkTheoremT "MultiSylowPk2Counting" 14
   (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n"]
@@ -612,9 +608,9 @@ multiSylowPk2Counting = mkTheoremT "MultiSylowPk2Counting" 14
       | gVal == g2Val && pVal == p2Val =
           case (gVal,pVal,nVal,pkVal) of
             (Sym g, Nat p, Nat n, Nat pk) ->
-               if n > 1 && pk == p * p && p > 1 then
-                  let lower = (p - 1) + n * (pk - p)
-                  in [TOFact (mkFactP POrderPkLowerBound [Sym g, Nat p, Nat lower])]
+               -- Match Python logic exactly: if pk != p (non-prime order) and n > 1, use conservative bound pk
+               if pk /= p && n > 1 && p > 1 then
+                  [TOFact (mkFactP POrderPkLowerBound [Sym g, Nat p, Nat pk])]
                else []
             _ -> []
     applyMultiSylowPk2 _ = []
@@ -697,7 +693,7 @@ standardTheorems =
   , normalizerEverythingImpliesNormal -- parity with Python normalizer_everything_implies_normal
   , normalizerSylowIntersection
   , primeOrderCounting
-  , multiSylowPk2Counting       -- new: improved p^2 multi-Sylow element counting lower bound
+  -- , multiSylowPk2Counting       -- REMOVED: redundant with countOrderPkElements which already matches Python logic
   , orderPkCountingContradiction
   , simpleNotSimple
   -- , ruleOutMaxIntersections  -- DISABLED: Too restrictive, causes false contradiction for PSL(2,7) at order 168
