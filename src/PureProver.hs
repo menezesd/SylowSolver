@@ -58,18 +58,38 @@ runProverM (ProverM computation) env = runState (runExceptT computation) env
 
 -- | Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty H.empty 0 0 S.empty
+emptyEnv = Env
+  { eFacts = S.empty
+  , eDisjs = M.empty
+  , eFrontier = S.empty
+  , eAppQueue = H.empty
+  , eNextDid = 0
+  , eFresh = 0
+  , eClosedAlts = S.empty
+  , eFactIndex = M.empty
+  }
 
 -- | Pure fact insertion
 insertFact :: Fact -> ProverM Bool  
 insertFact fact = do
   env@Env{..} <- get
-  if fact `S.member` eFacts
-    then return False
-    else do
+  let key = (fPred fact, fArgs fact)
+  case M.lookup key eFactIndex of
+    Nothing -> do
       put env { eFacts = S.insert fact eFacts
-              , eFrontier = S.insert fact eFrontier }
+              , eFrontier = S.insert fact eFrontier
+              , eFactIndex = M.insert key fact eFactIndex }
       return True
+    Just existing -> do
+      let mergedDeps = S.union (fDeps existing) (fDeps fact)
+      if mergedDeps == fDeps existing
+        then return False
+        else do
+          let updated = existing { fDeps = mergedDeps }
+              facts' = S.insert updated (S.delete existing eFacts)
+          put env { eFacts = facts'
+                  , eFactIndex = M.insert key updated eFactIndex }
+          return False -- structurally identical
 
 -- | Pure disjunction insertion
 insertDisj :: Disj -> ProverM [Fact]

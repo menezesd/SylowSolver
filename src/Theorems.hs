@@ -681,7 +681,7 @@ standardTheorems =
   , cosetAction
   , faithfulCosetAction        -- new: derive faithfulAction from core-free coset action pattern
   , simpleGroupActionFaithful  -- new: guarded replacement for simpleGroupActionAlt
-  -- , simpleGroupActionAlt  -- legacy parity attempt (disabled)
+  , simpleGroupActionAlt  -- ENABLED: Matches Python's simple_group_action exactly (transitive action + simple -> alternating embedding)
   -- , simpleGroupAction  -- DISABLED: This theorem is incorrect and causes false contradictions
   , multipleSylows
   , alternatingOrder

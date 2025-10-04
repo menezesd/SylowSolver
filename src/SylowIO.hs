@@ -6,6 +6,8 @@ import Control.Monad (when)
 import System.Environment (getArgs)
 import System.IO (isEOF)
 import qualified Data.Set as S
+import qualified Data.Map.Strict as M
+import qualified Data.List as L
 
 import Types
 import Errors
@@ -60,6 +62,8 @@ runProofAttempt config@SolverConfig{..} n = do
         , eNextDid = 0
         , eFresh = 0
         , eClosedAlts = S.empty
+        , eFactIndex = M.fromList [ ((fPred f, fArgs f), f) | f <- hypotheses ]
+        , eDisjIndex = M.empty
         }
       ((), envWithQueue, initTrace) = runRWS initialPopulateQueue (Engine standardTheorems solverMaxRounds 0) env0
       (finalEnv, trace) = runProver (Engine standardTheorems solverMaxRounds 0) envWithQueue
@@ -67,6 +71,13 @@ runProofAttempt config@SolverConfig{..} n = do
         if any Prover.isContradiction (S.toList (eFacts finalEnv))
           then Right True
           else Right False
+      uniqueFacts = M.size (eFactIndex finalEnv)
+      totalFacts = S.size (eFacts finalEnv)
+      disjCount = length (eDisjs finalEnv)
+      predFreq =
+        let addFact m f = M.insertWith (+) (fPred f) 1 m
+            m = foldl addFact M.empty (S.toList (eFacts finalEnv))
+        in L.sortOn (negate . snd) (M.toList m)
           
   -- Debug output
   when dbg $ do
@@ -74,6 +85,14 @@ runProofAttempt config@SolverConfig{..} n = do
     mapM_ (putStrLn . ("INIT: " ++) . show) initTrace
     putStrLn $ "DEBUG: Main trace events: " ++ show (length trace)
     mapM_ (putStrLn . ("MAIN: " ++) . show) (take 20 trace) -- Limit to avoid spam
+  putStrLn $ "STATS: unique_facts=" ++ show uniqueFacts ++
+             " total_fact_objects=" ++ show totalFacts ++
+             " disjunctions=" ++ show disjCount ++
+             " trace_events=" ++ show (length trace)
+  when verbose $ do
+    let topN = take 10 predFreq
+    putStrLn "Top predicate frequencies:"
+    mapM_ (\(p,c) -> putStrLn $ "  " ++ show p ++ ": " ++ show c) topN
   case proofResult of
         Right True -> do
           putStrLn "✓ CONTRADICTION derived (goal proven)."

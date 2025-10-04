@@ -6,8 +6,9 @@ import Control.Monad.RWS.Strict (RWS, ask, get, put, runRWS, tell)
 import qualified Data.Heap as H
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import qualified Data.Set as HS  -- using a second alias for clarity on key set
 import Data.Maybe (fromMaybe)
-import Data.List (intercalate, (\\))
+import Data.List (intercalate, (\\), sort)
 
 import Types
 import DebugLog (dtrace)
@@ -18,14 +19,46 @@ type ProverM = RWS Engine [TraceEvent] Env
 
 -- Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty H.empty 0 0 S.empty
+emptyEnv = Env S.empty M.empty S.empty H.empty 0 0 S.empty M.empty M.empty
 
+-- Instrumentation: track theorem application counts (in-memory only; not persisted)
+type ThmCounters = M.Map String Int
+
+data IterMetrics = IterMetrics
+  { imIteration :: !Int
+  , imStartFactCount :: !Int
+  , imEndFactCount :: !Int
+  , imAppliedTheorems :: !Int
+  } deriving (Show)
+
+data EngineMetrics = EngineMetrics
+  { emThmCounts :: ThmCounters
+  , emIterations :: [IterMetrics]
+  }
+
+emptyEngineMetrics :: EngineMetrics
+emptyEngineMetrics = EngineMetrics M.empty []
+
+-- Canonical fact insertion with dependency merging.
+-- Keyed only by (predicate, args); if an existing fact matches structurally,
+-- we merge dependency sets and keep the original provenance.
 insertFact :: Fact -> Env -> (Env, Bool)
-insertFact fact env@Env{..}
-  | fact `S.member` eFacts = (env, False)
-  | otherwise = 
-      let env' = env { eFacts = S.insert fact eFacts }
-      in (env', True)
+insertFact fact env@Env{..} =
+  let key = (fPred fact, fArgs fact)
+  in case M.lookup key eFactIndex of
+      Nothing ->
+        let env' = env { eFacts = S.insert fact eFacts
+                       , eFactIndex = M.insert key fact eFactIndex }
+        in (env', True)
+      Just existing ->
+        let mergedDeps = S.union (fDeps existing) (fDeps fact)
+        in if mergedDeps == fDeps existing
+             then (env, False) -- no new info
+             else let updated = existing { fDeps = mergedDeps }
+                      facts' = S.insert updated (S.delete existing eFacts)
+                      env' = env { eFacts = facts'
+                                 , eFactIndex = M.insert key updated eFactIndex }
+                  in (env', False) -- structurally same, treat as not new
 
 insertDisj :: Disj -> Env -> (Env, [Fact])
 insertDisj disj@Disj{..} env0 = (env', taggedAlternatives)
@@ -114,35 +147,44 @@ handleContradiction contraFact = do
 insertDisjM :: Disj -> ProverM [Fact]
 insertDisjM disj = do
   env <- get
-  let env1 = env { eDisjs = M.insert (dId disj) disj (eDisjs env) }
-  put env1
-  
-  -- Tag alternatives with proper dependencies and provenance
-  let tagAlternative ix alternative =
-        let altProvenance = case dProv disj of
-              Just prov@ProvTheorem{..} -> 
-                Just prov { fromDisj = Just (dId disj, ix) }
-              other -> other
-            newDeps = S.unions [fDeps alternative, dDeps disj, S.singleton (mkDep (dId disj) ix)]
-        in alternative { fDeps = newDeps, fProv = altProvenance }
-      
-      taggedAlternatives = zipWith tagAlternative [0..] (dAlts disj)
-  
-  -- Insert each alternative using insertFactM to trigger new applications
-  mapM_ insertFactM taggedAlternatives
-  
-  let subs = case dProv disj of
-               Just ProvTheorem{provSubs = Just s} -> s
-               _ -> M.empty
-  tell [TraceDisjInserted 
-    { teThm = fromMaybe "(disj)" (dLabel disj)
-    , teDid = dId disj
-    , teLabel = dLabel disj
-    , teAlts = dAlts disj
-    , teDeps = dDeps disj
-    , teSubs = subs
-    }]
-  return taggedAlternatives
+  let sig = canonicalDisjSignature (dAlts disj)
+  case M.lookup sig (eDisjIndex env) of
+    -- Disjunction already exists: do nothing (canonicalization) and return empty list
+    Just _existingDid -> return []
+    Nothing -> do
+      let newDid = dId disj
+          env1 = env { eDisjs = M.insert newDid disj (eDisjs env)
+                     , eDisjIndex = M.insert sig newDid (eDisjIndex env) }
+      put env1
+      -- Tag alternatives with proper dependencies and provenance
+      let tagAlternative ix alternative =
+            let altProvenance = case dProv disj of
+                  Just prov@ProvTheorem{..} -> 
+                    Just prov { fromDisj = Just (dId disj, ix) }
+                  other -> other
+                newDeps = S.unions [fDeps alternative, dDeps disj, S.singleton (mkDep (dId disj) ix)]
+            in alternative { fDeps = newDeps, fProv = altProvenance }
+          taggedAlternatives = zipWith tagAlternative [0..] (dAlts disj)
+      -- Insert each alternative using insertFactM to trigger new applications
+      mapM_ insertFactM taggedAlternatives
+      let subs = case dProv disj of
+                   Just ProvTheorem{provSubs = Just s} -> s
+                   _ -> M.empty
+      tell [TraceDisjInserted 
+        { teThm = fromMaybe "(disj)" (dLabel disj)
+        , teDid = dId disj
+        , teLabel = dLabel disj
+        , teAlts = dAlts disj
+        , teDeps = dDeps disj
+        , teSubs = subs
+        }]
+      return taggedAlternatives
+
+-- Build a canonical signature string for a disjunction's alternatives (predicate+args sorted)
+canonicalDisjSignature :: [Fact] -> String
+canonicalDisjSignature alts =
+  let factKey (Fact p as _ _) = predToString p ++ "(" ++ intercalate "," (map renderValue as) ++ ")"
+  in intercalate "|" (sort (map factKey alts))
 
 -- Breadth-first proof search (like Python auto_solve)
 proveLoop :: ProverM ()
@@ -166,7 +208,7 @@ proveLoopBFS iteration = do
         return ()
       else do
         -- Breadth-first: apply all possible theorems once per iteration
-        newFactsAdded <- applyAllTheoremsOnce
+        newFactsAdded <- applyAllTheoremsOnce iteration
         if not newFactsAdded
           then do
             tell [TraceFactInserted { teThm = "DEBUG", teFact = mkFactP PFalse [], teParentDeps = S.empty, teParents = [], teSubs = M.fromList [("no_new_facts","true"),("iteration", show iteration)] }]
@@ -176,21 +218,29 @@ proveLoopBFS iteration = do
             proveLoopBFS (iteration + 1)
 
 -- Apply all theorems once per iteration (breadth-first like Python)
-applyAllTheoremsOnce :: ProverM Bool
-applyAllTheoremsOnce = do
+applyAllTheoremsOnce :: Int -> ProverM Bool
+applyAllTheoremsOnce iter = do
   engine <- ask
   env <- get
   let facts = S.toList (eFacts env)
       factsByPredName = M.fromListWith (++) [(predToString (fPred f), [f]) | f <- facts]
   
   -- Generate all possible applications for all theorems
-  let allApps = concatMap (generateAllApplications factsByPredName) (thms engine)
+  let allAppsRaw = concatMap (generateAllApplications factsByPredName) (thms engine)
+      allApps    = dedupApplications allAppsRaw
   
   -- Limit applications per theorem to prevent runaway generation
   let limitedApps = limitApplicationsPerTheorem allApps
   
   -- Apply each application and track if any new facts were added
   newFactsAdded <- foldM applyAndCheck False limitedApps
+  -- Emit instrumentation event summarizing this iteration's theorem attempts
+  let appsByThm = M.fromListWith (+) [(appThmName app, 1 :: Int) | (_, app) <- limitedApps]
+      meta = M.fromList [("iter", show iter)
+                        ,("apps", show (length limitedApps))
+                        ,("distinct_theorems", show (M.size appsByThm))]
+  tell [TraceFactInserted { teThm = "INSTRUMENT", teFact = mkFactP PFalse [], teParentDeps = S.empty, teParents = [], teSubs = meta }]
+  mapM_ (emitPerThm iter) (M.toList appsByThm)
   return newFactsAdded
   where
     applyAndCheck hasNewFacts (_, app) = do
@@ -200,6 +250,14 @@ applyAllTheoremsOnce = do
       env2 <- get
       let factCountAfter = S.size (eFacts env2)
       return $ hasNewFacts || (factCountAfter > factCountBefore)
+    emitPerThm :: Int -> (String, Int) -> ProverM ()
+    emitPerThm i (tn,c) =
+      tell [TraceFactInserted { teThm = "THM_COUNT"
+                              , teFact = mkFactP PFalse []
+                              , teParentDeps = S.empty
+                              , teParents = []
+                              , teSubs = M.fromList [("iter", show i),("theorem", tn),("applications", show c)]
+                              }]
 
 -- Limit the number of applications per theorem per iteration to prevent explosions
 limitApplicationsPerTheorem :: [(Int, App)] -> [(Int, App)]
@@ -221,8 +279,10 @@ tryApplyTheorem thm@Theorem{..} tuple =
       let concreteTuple = map (substFact substitution) tuple
           parentDeps = S.unions (map fDeps concreteTuple)
           outputs = tApply concreteTuple
-          debugMsg = "APPLYING THEOREM: " ++ tName ++ "\n  facts: " ++ show concreteTuple ++ "\n  outputs: " ++ show outputs
-      in dtrace debugMsg $ map (outputToApp parentDeps concreteTuple substitution) outputs
+      in if null outputs
+           then []
+           else let debugMsg = "APPLYING THEOREM: " ++ tName ++ "\n  facts: " ++ show concreteTuple ++ "\n  outputs: " ++ show outputs
+                in dtrace debugMsg $ map (outputToApp parentDeps concreteTuple substitution) outputs
   where
     outputToApp deps parents subs out =
       let debugFactMsg = case out of
@@ -265,23 +325,25 @@ applyTheoremOutput App{..} =
       env <- get
       let canonAlt f = predToString (fPred f) ++ "(" ++ intercalate "," (map renderValue (fArgs f)) ++ ")"
           label = Just $ "{" ++ intercalate " | " (map canonAlt materializedAlts) ++ "}"
-          disj = Disj 
-            { dId = eNextDid env
-            , dAlts = materializedAlts
-            , dDeps = appDeps
-            , dProv = Just ProvTheorem 
-                { thmName = appThmName
-                , parentFacts = appParents
-                , fromDisj = Nothing
-                , provSubs = Just appSubs
+          sig = canonicalDisjSignature materializedAlts
+      case M.lookup sig (eDisjIndex env) of
+        Just _existing -> return () -- already have this disjunction; skip entirely
+        Nothing -> do
+          let disj = Disj 
+                { dId = eNextDid env
+                , dAlts = materializedAlts
+                , dDeps = appDeps
+                , dProv = Just ProvTheorem 
+                    { thmName = appThmName
+                    , parentFacts = appParents
+                    , fromDisj = Nothing
+                    , provSubs = Just appSubs
+                    }
+                , dLabel = label
                 }
-            , dLabel = label
-            }
-      alts <- insertDisjM disj
-      -- When a disjunction is added, its alternatives are also added as facts.
-      -- The `insertFactM` call for them will trigger `updateQueueWithNewFact`.
-      env' <- get
-      put env' { eNextDid = eNextDid env' + 1 }
+          _alts <- insertDisjM disj
+          env' <- get
+          put env' { eNextDid = eNextDid env' + 1 }
 
 -- Materialize wildcards within the ProverM monad
 materializeWildcardsM :: [Fact] -> ProverM [Fact]
@@ -331,3 +393,18 @@ combinations k (x:xs) = map (x:) (combinations (k-1) xs) ++ combinations k xs
 cartesian :: [[a]] -> [[a]]
 cartesian [] = [[]]
 cartesian (x:xs) = [y:ys | y <- x, ys <- cartesian xs]
+
+-- Deduplicate applications by a lightweight structural key: theorem name + output head predicate + parent preds
+-- Stronger application deduplication: collapse by theorem + normalized output only.
+-- Ignores differing parents / substitutions that lead to identical produced facts/disjunctions.
+dedupApplications :: [(Int, App)] -> [(Int, App)]
+dedupApplications apps = M.elems $ foldl step M.empty apps
+  where
+    step acc pair@(_cost, app@App{..}) =
+      let key = appThmName ++ "|" ++ outKey appOutput
+      in M.insertWith (\_ old -> old) key pair acc
+    outKey (TOFact (Fact p as _ _)) = "F:" ++ predToString p ++ "(" ++ intercalate "," (map renderValue as) ++ ")"
+    outKey (TODisj facts) =
+      let alts = map factKey facts
+      in "D:{" ++ intercalate "|" (sort alts) ++ "}"
+    factKey (Fact p as _ _) = predToString p ++ "(" ++ intercalate "," (map renderValue as) ++ ")"
