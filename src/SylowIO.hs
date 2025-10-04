@@ -52,13 +52,14 @@ runProofAttempt config@SolverConfig{..} n = do
   
   let hypotheses = createHypotheses n
       goal = goalFalse
-      env0 = Env 
+      env0 = Env
         { eFacts = S.fromList hypotheses
         , eDisjs = mempty
-        , eFrontier = S.fromList hypotheses -- Initially, all facts are new
+        , eFrontier = S.fromList hypotheses
         , eAppQueue = mempty
         , eNextDid = 0
         , eFresh = 0
+        , eClosedAlts = S.empty
         }
       ((), envWithQueue, initTrace) = runRWS initialPopulateQueue (Engine standardTheorems solverMaxRounds 0) env0
       (finalEnv, trace) = runProver (Engine standardTheorems solverMaxRounds 0) envWithQueue

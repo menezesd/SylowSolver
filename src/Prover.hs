@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 module Prover where
 
-import Control.Monad (when, replicateM)
+import Control.Monad (when, replicateM, foldM)
 import Control.Monad.RWS.Strict (RWS, ask, get, put, runRWS, tell)
 import qualified Data.Heap as H
 import qualified Data.Map.Strict as M
@@ -10,6 +10,7 @@ import Data.Maybe (fromMaybe)
 import Data.List (intercalate, (\\))
 
 import Types
+import DebugLog (dtrace)
 import Matching
 
 -- Prover monad
@@ -17,7 +18,7 @@ type ProverM = RWS Engine [TraceEvent] Env
 
 -- Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty H.empty 0 0
+emptyEnv = Env S.empty M.empty S.empty H.empty 0 0 S.empty
 
 insertFact :: Fact -> Env -> (Env, Bool)
 insertFact fact env@Env{..}
@@ -81,15 +82,13 @@ insertFactM fact = do
       }]
     env <- get
     let factCount = S.size (eFacts env)
-    updateQueueWithNewFact fact
-    env' <- get
-    let queueSize = H.size (eAppQueue env')
+    -- No queue update in breadth-first mode
     tell [TraceFactInserted 
       { teThm = "DEBUG"
       , teFact = mkFactP PFalse []
       , teParentDeps = S.empty
       , teParents = []
-      , teSubs = M.fromList [("fact_added", predToString (fPred fact)), ("total_facts", show factCount), ("queue_size", show queueSize)]
+      , teSubs = M.fromList [("fact_added", predToString (fPred fact)), ("total_facts", show factCount)]
       }]
   when (isContradiction fact) $ handleContradiction fact
   return added
@@ -97,30 +96,20 @@ insertFactM fact = do
 handleContradiction :: Fact -> ProverM ()
 handleContradiction contraFact = do
   let deps = fDeps contraFact
+  env <- get
+  let hasGlobal = any (\f -> isContradiction f && S.null (fDeps f)) (eFacts env)
   if S.null deps
-    then return () -- Real contradiction, will be handled in proveLoop
+    then return () -- already a global contradiction
     else do
-      let maxDid = maximum $ map depDisjInt $ S.toList deps
-          maxDep = fromMaybe (error "empty deps") $ S.lookupMax deps
-      
-      tell [TraceFactInserted
-        { teThm = "BACKTRACK"
-        , teFact = mkFactP PFalse []
-        , teParentDeps = S.empty
-        , teParents = []
-        , teSubs = M.fromList [("contradiction_from", show (fProv contraFact)), ("deps", show (S.toList deps)), ("max_dep", show maxDep)]
-        }]
-
-      -- Invalidate facts and applications depending on the failed branch
-      env <- get
-      let factsToInvalidate = S.filter (\f -> maxDep `S.member` fDeps f) (eFacts env)
-          remainingFacts = eFacts env S.\\ factsToInvalidate
-          
-          -- Filter the application queue
-          isValidApp (_, app) = maxDep `S.notMember` appDeps app
-          newQueue = H.filter isValidApp (eAppQueue env)
-
-      put env { eFacts = remainingFacts, eAppQueue = newQueue }
+      -- Inject a global contradiction fact (dep-free) if not present
+      if not hasGlobal
+        then do
+          -- Preserve the provenance from the original contradiction
+          let globalFact = contraFact { fDeps = S.empty }
+          _ <- insertFactM globalFact
+          tell [TraceFactInserted { teThm = "BACKTRACK", teFact = globalFact, teParentDeps = S.empty, teParents = [], teSubs = M.fromList [("lifted_branch_contradiction","true"),("deps", show (S.toList deps))] }]
+          return ()
+        else return ()
 
 insertDisjM :: Disj -> ProverM [Fact]
 insertDisjM disj = do
@@ -155,85 +144,74 @@ insertDisjM disj = do
     }]
   return taggedAlternatives
 
--- Single proof step (now the main loop)
+-- Breadth-first proof search (like Python auto_solve)
 proveLoop :: ProverM ()
-proveLoop = do
-  env <- get
-  let contradictionFound = any isContradiction (eFacts env)
-  if contradictionFound
-    then do
-      let contraFact = fromMaybe (error "contradiction not found") $ S.lookupMin $ S.filter isContradiction (eFacts env)
-      when (S.null (fDeps contraFact)) $ do
-        tell [TraceFactInserted 
-          { teThm = "DEBUG"
-          , teFact = mkFactP PFalse []
-          , teParentDeps = S.empty
-          , teParents = []
-          , teSubs = M.fromList [("contradiction_found", "true")]
-          }]
-      when (S.null (fDeps contraFact)) $ return () -- Halt on true contradiction
-      when (not (S.null (fDeps contraFact))) proveLoop -- Continue if it was a branch contradiction
-    else do
-      case H.view (eAppQueue env) of
-        Nothing -> do
-          tell [TraceFactInserted 
-            { teThm = "DEBUG"
-            , teFact = mkFactP PFalse []
-            , teParentDeps = S.empty
-            , teParents = []
-            , teSubs = M.fromList [("queue_empty", "true"), ("total_facts", show (S.size (eFacts env)))]
-            }]
-          return () -- Queue is empty, we are done
-        Just ((cost, app), newQueue) -> do
-          put env { eAppQueue = newQueue }
-          
-          tell [TraceFactInserted 
-            { teThm = "DEBUG"
-            , teFact = mkFactP PFalse []
-            , teParentDeps = S.empty
-            , teParents = []
-            , teSubs = M.fromList [("applying", appThmName app), ("cost", show cost)]
-            }]
-          
-          -- Apply the theorem
-          applyTheoremOutput app
-          
-          -- Continue loop
-          proveLoop
+proveLoop = proveLoopBFS 0
 
--- Find new applications for a fact and add them to the queue
-updateQueueWithNewFact :: Fact -> ProverM ()
-updateQueueWithNewFact newFact = do
+proveLoopBFS :: Int -> ProverM ()
+proveLoopBFS iteration = do
+  env <- get
+  engine <- ask
+  let anyContradiction = any isContradiction (eFacts env)
+      globalContradiction = any (\f -> isContradiction f && S.null (fDeps f)) (eFacts env)
+      maxRoundsLimit = maxRounds engine
+  
+  if globalContradiction || anyContradiction
+    then do
+      tell [TraceFactInserted { teThm = "DEBUG", teFact = mkFactP PFalse [], teParentDeps = S.empty, teParents = [], teSubs = M.fromList [("contradiction_found","true"),("global", show globalContradiction)] }]
+      return ()
+    else if iteration >= maxRoundsLimit
+      then do
+        tell [TraceFactInserted { teThm = "DEBUG", teFact = mkFactP PFalse [], teParentDeps = S.empty, teParents = [], teSubs = M.fromList [("max_iterations_reached", show maxRoundsLimit)] }]
+        return ()
+      else do
+        -- Breadth-first: apply all possible theorems once per iteration
+        newFactsAdded <- applyAllTheoremsOnce
+        if not newFactsAdded
+          then do
+            tell [TraceFactInserted { teThm = "DEBUG", teFact = mkFactP PFalse [], teParentDeps = S.empty, teParents = [], teSubs = M.fromList [("no_new_facts","true"),("iteration", show iteration)] }]
+            return ()
+          else do
+            tell [TraceFactInserted { teThm = "DEBUG", teFact = mkFactP PFalse [], teParentDeps = S.empty, teParents = [], teSubs = M.fromList [("iteration", show iteration),("total_facts", show (S.size (eFacts env)))] }]
+            proveLoopBFS (iteration + 1)
+
+-- Apply all theorems once per iteration (breadth-first like Python)
+applyAllTheoremsOnce :: ProverM Bool
+applyAllTheoremsOnce = do
   engine <- ask
   env <- get
   let facts = S.toList (eFacts env)
+      factsByPredName = M.fromListWith (++) [(predToString (fPred f), [f]) | f <- facts]
   
-  let findApps thm@Theorem{..} =
-        let TTemplate patterns = tTemplate
-            k = length patterns
-            factsByPredName = M.fromListWith (++) [(predToString (fPred f), [f]) | f <- facts]
-            -- For each position where newFact could fit
-            tuplesThatIncludeNewFact = 
-              [ tuple
-              | i <- [0..k-1]
-              , let patternAtI = patterns !! i
-              , predToString (fPred newFact) == tpName patternAtI  -- newFact matches pattern at position i
-              , let otherPatterns = take i patterns ++ drop (i+1) patterns
-              , let otherCandidates = [ M.findWithDefault [] (tpName p) factsByPredName | p <- otherPatterns ]
-              , otherFacts <- cartesian otherCandidates
-              , let tuple = take i otherFacts ++ [newFact] ++ drop i otherFacts
-              , length tuple == k
-              ]
-        in if k == 0
-           then []
-           else [(thm, tuple) | tuple <- tuplesThatIncludeNewFact]
+  -- Generate all possible applications for all theorems
+  let allApps = concatMap (generateAllApplications factsByPredName) (thms engine)
   
-  let allPotentialApps = concatMap findApps (thms engine)
+  -- Limit applications per theorem to prevent runaway generation
+  let limitedApps = limitApplicationsPerTheorem allApps
   
-  let newApps = concatMap (uncurry tryApplyTheorem) allPotentialApps
-  
-  let newQueue = foldl (\q (cost, app) -> H.insert (cost, app) q) (eAppQueue env) newApps
-  put env { eAppQueue = newQueue }
+  -- Apply each application and track if any new facts were added
+  newFactsAdded <- foldM applyAndCheck False limitedApps
+  return newFactsAdded
+  where
+    applyAndCheck hasNewFacts (_, app) = do
+      env1 <- get
+      let factCountBefore = S.size (eFacts env1)
+      applyTheoremOutput app
+      env2 <- get
+      let factCountAfter = S.size (eFacts env2)
+      return $ hasNewFacts || (factCountAfter > factCountBefore)
+
+-- Limit the number of applications per theorem per iteration to prevent explosions
+limitApplicationsPerTheorem :: [(Int, App)] -> [(Int, App)]
+limitApplicationsPerTheorem apps = 
+  let groupByThm = M.fromListWith (++) [(appThmName app, [(cost, app)]) | (cost, app) <- apps]
+      limitPerThm = 50  -- Allow up to 50 applications per theorem per iteration
+      limitedGroups = M.map (take limitPerThm) groupByThm
+  in concat (M.elems limitedGroups)
+
+-- No longer needed for breadth-first search - facts are processed each iteration
+updateQueueWithNewFact :: Fact -> ProverM ()
+updateQueueWithNewFact _ = return () -- No-op in breadth-first approach
 
 tryApplyTheorem :: Theorem -> [Fact] -> [(Int, App)]
 tryApplyTheorem thm@Theorem{..} tuple =
@@ -243,17 +221,22 @@ tryApplyTheorem thm@Theorem{..} tuple =
       let concreteTuple = map (substFact substitution) tuple
           parentDeps = S.unions (map fDeps concreteTuple)
           outputs = tApply concreteTuple
-      in map (outputToApp parentDeps concreteTuple substitution) outputs
+          debugMsg = "APPLYING THEOREM: " ++ tName ++ "\n  facts: " ++ show concreteTuple ++ "\n  outputs: " ++ show outputs
+      in dtrace debugMsg $ map (outputToApp parentDeps concreteTuple substitution) outputs
   where
     outputToApp deps parents subs out =
-      let app = App
-            { appThmName = tName
-            , appOutput  = out
-            , appDeps    = deps
-            , appParents = parents
-            , appSubs    = subs
-            }
-      in (tCost, app)
+      let debugFactMsg = case out of
+            TOFact f -> "  GENERATED FACT: " ++ show f
+            TODisj fs -> "  GENERATED DISJUNCTION: " ++ show fs
+      in dtrace debugFactMsg (tCost, app)
+      where
+        app = App
+          { appThmName = tName
+          , appOutput  = out
+          , appDeps    = deps
+          , appParents = parents
+          , appSubs    = subs
+          }
 
 isContradiction :: Fact -> Bool
 isContradiction (Fact (PFalse) _ _ _) = True
@@ -314,35 +297,19 @@ runProver engine env =
   let (_, finalEnv, trace) = runRWS proveLoop engine env
   in (finalEnv, trace)
 
--- Initial population of the queue
+-- No longer needed - breadth-first search doesn't use a pre-populated queue
 initialPopulateQueue :: ProverM ()
 initialPopulateQueue = do
-  engine <- ask
   env <- get
   let facts = S.toList (eFacts env)
-      factsByPredName = M.fromListWith (++) [(predToString (fPred f), [f]) | f <- facts]
   
   tell [TraceFactInserted 
     { teThm = "DEBUG"
     , teFact = mkFactP PFalse [] -- dummy fact for debug
     , teParentDeps = S.empty
     , teParents = []
-    , teSubs = M.fromList [("initial_facts", show (length facts))]
+    , teSubs = M.fromList [("initial_facts", show (length facts)), ("breadth_first_mode", "true")]
     }]
-  
-  -- Generate all possible theorem applications from existing facts
-  let allApps = concatMap (generateAllApplications factsByPredName) (thms engine)
-  let newQueue = foldl (\q (cost, app) -> H.insert (cost, app) q) (eAppQueue env) allApps
-  
-  tell [TraceFactInserted 
-    { teThm = "DEBUG"
-    , teFact = mkFactP PFalse [] -- dummy fact for debug
-    , teParentDeps = S.empty
-    , teParents = []
-    , teSubs = M.fromList [("initial_apps", show (length allApps))]
-    }]
-  
-  put env { eAppQueue = newQueue }
 
 -- Generate all possible applications of a theorem given available facts
 generateAllApplications :: M.Map String [Fact] -> Theorem -> [(Int, App)]

@@ -72,6 +72,7 @@ data Pred
   | PSimple
   | PNotSimple
   | PIs
+  | PNormalizerOfSylowIntersection
   deriving (Eq, Ord, Show)
 
 -- Typed Fact placeholder for gradual migration
@@ -107,6 +108,7 @@ predToString p = case p of
   PSimple -> "simple"
   PNotSimple -> "notSimple"
   PIs -> "is"
+  PNormalizerOfSylowIntersection -> "normalizerOfSylowIntersection"
 
 parsePred :: String -> Maybe Pred
 parsePred s = case s of
@@ -132,6 +134,7 @@ parsePred s = case s of
   "simple" -> Just PSimple
   "notSimple" -> Just PNotSimple
   "is" -> Just PIs
+  "normalizerOfSylowIntersection" -> Just PNormalizerOfSylowIntersection
   _ -> Nothing
 
 -- Value render/parse helpers
@@ -229,6 +232,7 @@ data Env = Env
   , eAppQueue  :: H.MinPrioHeap Int App
   , eNextDid   :: Int
   , eFresh     :: Int
+  , eClosedAlts :: S.Set (Int, Int) -- (DisjId, AltIx) pairs that have been closed by contradiction
   } deriving (Show)
 
 -- Engine configuration

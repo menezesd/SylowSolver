@@ -58,7 +58,7 @@ runProverM (ProverM computation) env = runState (runExceptT computation) env
 
 -- | Environment operations
 emptyEnv :: Env
-emptyEnv = Env S.empty M.empty S.empty H.empty 0 0
+emptyEnv = Env S.empty M.empty S.empty H.empty 0 0 S.empty
 
 -- | Pure fact insertion
 insertFact :: Fact -> ProverM Bool  

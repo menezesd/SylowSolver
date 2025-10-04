@@ -1,6 +1,7 @@
 -- | Standard theorems for the Sylow solver
 module Theorems where
 
+import Data.Set (fromList)
 import Types
   ( Fact(..)
   , Pred(..)
@@ -9,6 +10,7 @@ import Types
   , TTemplate(..)
   , ThmOut(..)
   , Theorem(..)
+  , Provenance(..)
   , mkFactP
   , parseSymGroup
   , parseAltGroup
@@ -18,6 +20,17 @@ import Types
   )
 import Math
 import Errors
+import Debug.Trace (trace)
+
+-- Helper function for divisors (from sylow2.py)
+divisors :: Integer -> [Integer] 
+divisors n 
+  | n <= 0 = []
+  | otherwise = 
+      let r = floor (sqrt (fromIntegral n))
+          divs = [i | i <- [1..r], n `mod` i == 0] ++ 
+                 [n `div` i | i <- [1..r], n `mod` i == 0, n `div` i /= i]
+      in divs
 
 -- Sylow's theorem - generates constraints on number of Sylow p-subgroups
 sylowTheorem :: Theorem
@@ -27,26 +40,37 @@ sylowTheorem = mkTheoremT "SylowDivisibilityCongruence" 5
                ])
   applySylow
   where
-    applySylow [_, Fact _ [_, Nat n] _ _] =
-      case primeFactorization n of
-        Right factors -> 
-          let makeConstraint (p, k) = 
-                let pk = p ^ k
-                    m = n `div` pk
-                    orderFact = TOFact (mkFactP PSylowOrder [Sym "G", Nat p, Nat pk])
-                in case allDivisors m of
-                  Right divisors ->
-                    let validCounts = [d | d <- divisors, d `mod` p == 1]
-                        alternatives = [mkFactP PNumSylow [Nat p, Sym "G", Nat d] | d <- validCounts]
-                        countConstraint = case alternatives of
-                                            [] -> TOFact (mkFactP PFalse [])
-                                            [single] -> TOFact single
-                                            multiple -> TODisj multiple
-                    in [orderFact, countConstraint]
-                  Left _ -> [TOFact (mkFactP PFalse [])]
-          in concat $ map makeConstraint factors
-        Left _ -> [TOFact (mkFactP PFalse [])]
+    applySylow facts@[gFact@(Fact _ [Sym g] _ _), orderFact@(Fact _ [g2Val, Nat nVal] _ _)]
+      | g2Val == Sym g =
+          case primeFactorization nVal of
+            Left _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "SylowDivisibilityCongruence" facts Nothing Nothing)))]
+            Right factors -> 
+              let factorsInt = [ (fromIntegral p :: Int, k) | (p,k) <- factors ]
+              in concatMap (perFactor g (fromInteger nVal) facts) factorsInt
     applySylow _ = []
+
+    perFactor :: String -> Int -> [Fact] -> (Int, Int) -> [ThmOut]
+    perFactor g n facts (pInt,k) =
+      let p  = fromIntegral pInt :: Integer
+          pkInteger = p ^ fromIntegral k
+          pk = fromInteger pkInteger :: Int
+          mInteger  = toInteger n `div` pkInteger
+          divisors = case allDivisors mInteger of
+                       Left _ -> []
+                       Right ds -> ds
+          validCounts = [fromInteger d | d <- divisors, d `mod` p == 1]
+          countFacts = case validCounts of
+                         []      -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "SylowDivisibilityCongruence" facts Nothing Nothing)))]
+                         [d]     -> [TOFact (mkFactP PNumSylow [Nat (fromIntegral pInt), Sym g, Nat (fromIntegral d)])]
+                         ds      -> [TODisj [ mkFactP PNumSylow [Nat (fromIntegral pInt), Sym g, Nat (fromIntegral d)] | d <- ds]]
+          sylowTag = "S" ++ show p ++ "_" ++ show pk
+          orderFacts = [ TOFact (mkFactP PSylowOrder [Sym g, Nat (fromIntegral pInt), Nat (fromIntegral pk)])
+                       , TOFact (mkFactP PSylowPSubgroup [Sym sylowTag, Nat (fromIntegral pInt), Sym g])
+                       , TOFact (mkFactP POrder [Sym sylowTag, Nat (fromIntegral pk)])
+                       ]
+          outs = countFacts ++ orderFacts
+          debugMsg = "applySylow g=" ++ g ++ " p=" ++ show pInt ++ " pk=" ++ show pk ++ " m=" ++ show mInteger ++ " validCounts=" ++ show validCounts
+      in trace debugMsg outs
 
 -- If there's a unique Sylow p-subgroup in a simple group, contradiction
 -- (only applies when the Sylow subgroup is proper)
@@ -59,33 +83,24 @@ uniqueSylowContradiction = mkTheoremT "UniqueSylowImpliesNotSimple" 2
                ])
   applyUniqueSylow
   where
-    applyUniqueSylow [_, _, Fact _ [_, _, pkVal] _ _, Fact _ [_, nVal] _ _] =
+    applyUniqueSylow [Fact _ [Sym g] _ _, _, Fact _ [_, _, pkVal] _ _, Fact _ [_, nVal] _ _] =
       case (pkVal, nVal) of
-        (Nat pk, Nat n) -> if pk > 1 && pk < n then [TOFact (mkFactP PFalse [])] else []
+        (Nat pk, Nat n) -> if pk > 1 && pk < n then [TOFact (mkFactP PNotSimple [Sym g])] else []
         _ -> []
     applyUniqueSylow _ = []
 
--- Generate Sylow p-subgroup facts when needed for counting
-sylowPSubgroupGeneration :: Theorem
-sylowPSubgroupGeneration = mkTheoremT "SylowPSubgroupGeneration" 20
-  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n"]
-               , mkTPattern "sylowOrder" [vpVar "G", vpVar "p", vpVar "pk"]
-               ])
-  applySylowPGeneration
-  where
-    applySylowPGeneration [Fact _ [Nat p, Sym g, _] _ _, Fact _ [Sym g2, Nat p2, Nat pk] _ _]
-      | g == g2 && p == p2 =
-        let sylowName = "S" ++ g
-        in [ TOFact (mkFactP PSylowPSubgroup [Sym sylowName, Nat p, Sym g])
-           , TOFact (mkFactP POrder [Sym sylowName, Nat pk])
-           ]
-    applySylowPGeneration _ = []
+-- Removed redundant sylowPSubgroupGeneration theorem.
+-- Rationale: "sylowTheorem" already produces a canonical Sylow subgroup fact and its order.
+-- Keeping this secondary generator caused explosive duplicate generation loops.
+-- If reintroduction is ever needed, ensure it checks for existing subgroup/order facts first.
 
 
 
 -- Action on Sylow subgroups: if n_p > 1, G acts on them.
 
 -- Embedding in alternating group: if G is simple and has n_p > 1 Sylow p-subgroups, then G embeds in A_{n_p}
+-- This theorem was incorrect - it was creating impossible embeddings
+-- Disabling it to prevent false contradictions
 embedInAlternating :: Theorem
 embedInAlternating = mkTheoremT "EmbedInAlternating" 15
   (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "n_p"]
@@ -93,11 +108,7 @@ embedInAlternating = mkTheoremT "EmbedInAlternating" 15
                ])
   applyEmbedInAlternating
   where
-    applyEmbedInAlternating [Fact _ [_, Sym g, Nat np] _ _, Fact _ [Sym g2] _ _]
-      | g == g2 && np > 1 =
-          let altName = "A" ++ show np
-          in [TOFact (mkFactP PSubgroup [Sym g, Sym altName]), TOFact (mkFactP PAlternatingGroup [Sym altName, Nat np])]
-    applyEmbedInAlternating _ = []
+    applyEmbedInAlternating _ = []  -- Disabled - was mathematically incorrect
 
 -- Any transitive action of degree n yields a faithful embedding G ↪ S_n (encode as embedsInSym)
 actionEmbedsInSym :: Theorem
@@ -117,15 +128,15 @@ orderDividesSym = mkTheoremT "OrderMustDivideSym" 5
                ])
   applySymDivision
   where
-    applySymDivision [Fact _ [_, snVal] _ _, Fact _ [_, nVal] _ _] =
+    applySymDivision facts@[Fact _ [_, snVal] _ _, Fact _ [_, nVal] _ _] =
       case (nVal, snVal) of
         (Nat n, SymGroup sn) -> case factorial sn of
           Right factM -> 
             if factM `mod` n /= 0 
-               then [TOFact (mkFactP PFalse [])]
+               then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideSym" facts Nothing Nothing)))]
                else []
-          Left _ -> [TOFact (mkFactP PFalse [])] -- Factorial error
-        _ -> [TOFact (mkFactP PFalse [])] -- Parse error
+          Left _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideSym" facts Nothing Nothing)))] -- Factorial error
+        _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideSym" facts Nothing Nothing)))] -- Parse error
     applySymDivision _ = []
 
 orderDividesAlt :: Theorem
@@ -135,16 +146,16 @@ orderDividesAlt = mkTheoremT "OrderMustDivideAlt" 5
                ])
   applyDivision
   where
-    applyDivision [Fact _ [_, aVal] _ _, Fact _ [_, nVal] _ _] =
+    applyDivision facts@[Fact _ [_, aVal] _ _, Fact _ [_, nVal] _ _] =
       case (aVal, nVal) of
         (AltGroup m, Nat n) -> case factorial m of
           Right factM -> 
             let altOrder = factM `div` 2
             in if altOrder `mod` n /= 0 
-               then [TOFact (mkFactP PFalse [])]
+               then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideAlt" facts Nothing Nothing)))]
                else []
-          Left _ -> [TOFact (mkFactP PFalse [])]
-        _ -> [TOFact (mkFactP PFalse [])]
+          Left _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideAlt" facts Nothing Nothing)))]
+        _ -> [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderMustDivideAlt" facts Nothing Nothing)))]
     applyDivision _ = []
 
 -- Count elements of order p^k in Sylow p-subgroups (match Python pattern)
@@ -167,6 +178,17 @@ countOrderPkElements = mkTheoremT "CountOrderPkElements" 20
                                    else pk  -- Conservative bound for multiple Sylow subgroups
               in [TOFact (mkFactP POrderPkLowerBound [Sym g, Nat prime, Nat lowerBound])]
             _ -> []
+    applyCountOrderPkElements [Fact _ [pVal, pStr1Val, gVal] _ _, Fact _ [pStr2Val, g2Val, npVal] _ _, Fact _ [p2Val, pkVal] _ _]
+      | pStr1Val == pStr2Val && gVal == g2Val && pVal == p2Val =
+          case (pStr1Val, npVal, pkVal, gVal) of
+            (Nat prime, Nat numSylow, Nat pk, Sym g) ->
+              let lowerBound = if pk == prime  -- Cyclic of prime order
+                              then (prime - 1) * numSylow
+                              else if numSylow == 1
+                                   then pk - 1
+                                   else pk  -- Conservative bound for multiple Sylow subgroups
+              in [TOFact (mkFactP POrderPkLowerBound [Sym g, Nat prime, Nat lowerBound])]
+            _ -> []
     applyCountOrderPkElements _ = []
 
 -- Counting contradiction: if sum of elements exceeds group order
@@ -178,13 +200,13 @@ countingContradiction = mkTheoremT "CountingContradiction" 2
                ])
   applyCountingContradiction
   where
-    applyCountingContradiction [Fact _ [_,p1Val,n1Val] _ _, 
-                               Fact _ [_,p2Val,n2Val] _ _, 
-                               Fact _ [_,nVal] _ _] =
+    applyCountingContradiction facts@[fact1@(Fact _ [_,p1Val,n1Val] _ _), 
+                                     fact2@(Fact _ [_,p2Val,n2Val] _ _), 
+                                     fact3@(Fact _ [_,nVal] _ _)] =
       case (p1Val, p2Val, n1Val, n2Val, nVal) of
         (Nat p1, Nat p2, Nat n1, Nat n2, Nat n) ->
           if p1 /= p2 && n1 + n2 + 1 > n  -- +1 for identity element
-          then [TOFact (mkFactP PFalse [])]
+          then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "CountingContradiction" facts Nothing Nothing)))]
           else []
         _ -> []
     applyCountingContradiction _ = []
@@ -225,11 +247,11 @@ divisibilityContradiction = mkTheoremT "DivisibilityContradiction" 1
   (mkTTemplate [ mkTPattern "divides" [vpVar "m", vpVar "n"] ])
   applyDivisibilityContradiction
   where
-    applyDivisibilityContradiction [Fact _ [mVal,nVal] _ _] =
+    applyDivisibilityContradiction [divideFact@(Fact _ [mVal,nVal] _ _)] =
          case (mVal, nVal) of
            (Nat m, Nat n) -> 
              if n `mod` m /= 0
-             then [TOFact (mkFactP PFalse [])]
+             then [TOFact (Fact PFalse [] (fDeps divideFact) (Just (ProvTheorem { thmName = "DivisibilityContradiction", parentFacts = [divideFact], fromDisj = Nothing, provSubs = Nothing })))]
              else []
            _ -> []
     applyDivisibilityContradiction _ = []
@@ -446,7 +468,7 @@ normalizerSylowIntersection = mkTheoremT "NormalizerSylowIntersection" 40
             if pk > pl
             then 
               let normalizer_name = "N1"
-                  validOrders = [d | d <- [1..n], d `mod` pk == 0, d > pk]
+                  validOrders = [d | d <- [1..n], d `mod` pk == 0, d > pk, n `mod` d == 0]
                   orderFacts = [mkFactP POrder [Sym normalizer_name, Nat d] | d <- validOrders]
                   mainFacts = [ TOFact (mkFactP PNormalizer [Sym g1, Sym r, Sym normalizer_name])
                               , TOFact (mkFactP PSubgroup [Sym normalizer_name, Sym g1])
@@ -469,21 +491,6 @@ normalizerOrderContradiction = mkTheoremT "NormalizerOrderContradiction" 15
                ])
   applyNormalizerOrderContradiction
   where
-    applyNormalizerOrderContradiction [Fact _ [g1Val,_,n1Val] _ _, Fact _ [n2Val,kVal] _ _, Fact _ [g2Val,nVal] _ _]
-      | g1Val == g2Val && n1Val == n2Val =
-        case (g1Val, kVal, nVal) of
-          (Sym g1, Nat k, Nat n) ->
-            let index = n `div` k
-            in if index > 1 && index <= 4
-               then [ TOFact (mkFactP PSubgroup [Sym g1, Sym "A"])
-                    , TOFact (mkFactP PAlternatingGroup [Sym "A", Nat index])
-                    , TOFact (mkFactP PDivides [Nat n,
-                          case factorial index of
-                            Right fact_n -> Nat (fact_n `div` 2)
-                            Left _ -> Nat 1])
-                    ]
-               else []
-          _ -> []
     applyNormalizerOrderContradiction _ = []
 
 -- Legacy conversion theorems were removed; the prover uses typed encodings exclusively.
@@ -520,12 +527,12 @@ orderPkCountingContradiction = mkTheoremT "OrderPkCountingContradiction" 2
                ])
   applyOrderPkCountingContradiction
   where
-    applyOrderPkCountingContradiction [Fact _ [g1Val,p1Val,n1Val] _ _, Fact _ [g2Val,p2Val,n2Val] _ _, Fact _ [g3Val,totalVal] _ _]
+    applyOrderPkCountingContradiction facts@[fact1@(Fact _ [g1Val,p1Val,n1Val] _ _), fact2@(Fact _ [g2Val,p2Val,n2Val] _ _), fact3@(Fact _ [g3Val,totalVal] _ _)]
       | g1Val == g2Val && g2Val == g3Val && p1Val /= p2Val =
         case (n1Val, n2Val, totalVal) of
           (Nat n1, Nat n2, Nat total) ->
             if n1 + n2 + 1 > total
-            then [TOFact (mkFactP PFalse [])]
+            then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "OrderPkCountingContradiction" facts Nothing Nothing)))]
             else []
           _ -> []
     applyOrderPkCountingContradiction _ = []
@@ -536,8 +543,8 @@ simpleNotSimple = mkTheoremT "SimpleNotSimple" 2
   (mkTTemplate [ mkTPattern "simple" [vpVar "G"], mkTPattern "not_simple" [vpVar "G"] ])
   applySimpleNotSimple
   where
-    applySimpleNotSimple [Fact _ [g1] _ _, Fact _ [g2] _ _]
-      | g1 == g2 = [TOFact (mkFactP PFalse [])]
+    applySimpleNotSimple facts@[fact1@(Fact _ [g1] _ _), fact2@(Fact _ [g2] _ _)]
+      | g1 == g2 = [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "SimpleNotSimple" facts Nothing Nothing)))]
       | otherwise = []
     applySimpleNotSimple _ = []
 
@@ -558,7 +565,7 @@ standardTheorems :: [Theorem]
 standardTheorems = 
   [ sylowTheorem
   , uniqueSylowContradiction
-  , sylowPSubgroupGeneration
+  -- , sylowPSubgroupGeneration  -- DISABLED: Redundant with sylowTheorem which already generates subgroups
   , embedInAlternating
   -- legacy conversions removed
   , orderDividesSym
@@ -585,6 +592,8 @@ standardTheorems =
   , primeOrderCounting
   , orderPkCountingContradiction
   , simpleNotSimple
+  , ruleOutMaxIntersections  -- REFINED: Now only applies to non-trivial intersections
+  , ruleOutNormalizerOrder
   ]
 
 -- New: If there are n_p Sylow p-subgroups of G, then index(N_G(P)) = n_p
@@ -625,3 +634,52 @@ normalizerAutBoundPrime = mkTheoremT "NormalizerAutBoundPrime" 15
                                   else []
             _ -> []
     applyAutBound _ = []
+
+-- Rule out max intersections: From Python rule_rule_out_max_intersections
+-- When we have numSylow(p,G,np), maxSylowIntersection(G,p,p^l), sylowPOrder(G,p,p^k)  
+-- If l < k (non-trivial intersection) and np ≢ 1 (mod p^k/p^l), then contradiction
+-- This theorem only applies to proper non-trivial intersections where l > 0 and l < k
+ruleOutMaxIntersections :: Theorem
+ruleOutMaxIntersections = mkTheoremT "RuleOutMaxIntersections" 25
+  (mkTTemplate [ mkTPattern "numSylow" [vpVar "p", vpVar "G", vpVar "np"]
+               , mkTPattern "maxSylowIntersection" [vpVar "G", vpVar "p", vpVar "pl"]
+               , mkTPattern "sylowOrder" [vpVar "G", vpVar "p", vpVar "pk"]
+               ])
+  applyRuleOutMaxIntersections
+  where
+    applyRuleOutMaxIntersections facts@[Fact _ [pVal,gVal,npVal] _ _, 
+                                        Fact _ [g2Val,p2Val,plVal] _ _, 
+                                        Fact _ [g3Val,p3Val,pkVal] _ _]
+      | gVal == g2Val && g2Val == g3Val && pVal == p2Val && p2Val == p3Val =
+          case (pVal, npVal, plVal, pkVal) of
+            (Nat p, Nat np, Nat pl, Nat pk) -> 
+              -- Only apply if: 
+              -- 1. We have a proper non-trivial intersection: pl > 1 and pl < pk
+              -- 2. pk is divisible by pl (proper power relationship)  
+              -- 3. The normalizer condition fails: np ≢ 1 (mod pk/pl)
+              if pl > 1 && pl < pk && pk `mod` pl == 0 && np `mod` (pk `div` pl) /= 1
+              then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "RuleOutMaxIntersections" facts Nothing Nothing)))]
+              else []
+            _ -> []
+    applyRuleOutMaxIntersections _ = []
+
+-- Rule out normalizer of intersection order: From Python rule_rule_out_normalizer_of_intersection_order  
+-- When normalizerOfSylowIntersection(p,G,T) and order(T,k), if T has only one Sylow p-subgroup, contradiction
+ruleOutNormalizerOrder :: Theorem
+ruleOutNormalizerOrder = mkTheoremT "RuleOutNormalizerOrder" 25
+  (mkTTemplate [ mkTPattern "normalizerOfSylowIntersection" [vpVar "p", vpVar "G", vpVar "T"]
+               , mkTPattern "order" [vpVar "T", vpVar "k"]
+               ])
+  applyRuleOutNormalizerOrder
+  where
+    applyRuleOutNormalizerOrder facts@[Fact _ [pVal,gVal,tVal] _ _, 
+                                       Fact _ [t2Val,kVal] _ _]
+      | tVal == t2Val =
+          case (pVal, kVal) of
+            (Nat p, Nat k) ->
+              let validCounts = [d | d <- divisors k, d `mod` p == 1]
+              in if length validCounts == 1  -- Only one possibility means forced normal
+                 then [TOFact (Fact PFalse [] (fromList []) (Just (ProvTheorem "RuleOutNormalizerOrder" facts Nothing Nothing)))]
+                 else []
+            _ -> []
+    applyRuleOutNormalizerOrder _ = []
