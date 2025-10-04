@@ -702,8 +702,8 @@ standardTheorems =
   , primeMinimalIndexNormal   -- new
   , index2Normal              -- new
   , normalSubgroupToNotSimple -- new
-  , sylowCountNarrowDivides   -- new
-  , sylowCountNarrowCongruence -- new
+  -- , sylowCountNarrowDivides   -- DISABLED: Too aggressive, eliminates multiple Sylow conditions needed for counting contradictions (not in Python)
+  -- , sylowCountNarrowCongruence -- DISABLED: Too aggressive, eliminates multiple Sylow conditions needed for counting contradictions (not in Python)
   , sylowCountDividesUpper     -- new
   , sylowCountCongruence       -- new
   , sylowNormalizerOrder       -- new
