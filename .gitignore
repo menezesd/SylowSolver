@@ -1,0 +1,8 @@
+__pycache__/
+dist-newstyle/
+*.aux
+*.log
+*.out
+*.pdf
+*.synctex.gz
+.DS_Store
