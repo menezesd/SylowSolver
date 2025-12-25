@@ -6,6 +6,7 @@ module Environment.Types
   , GoalState(..)
   , CaseState(..)
   , GeneratorState(..)
+  , EnvStats(..)
   , ProofEnvironment(..)
   , FactEntry(..)
   , DisjunctionEntry(..)
@@ -41,6 +42,9 @@ module Environment.Types
   , peCurLetter
   , peCurSuffix
   , peSymbolSet
+  , peSymbolTable
+  , peSymbolNames
+  , peNextSymbolId
   -- Case state accessors
   , peCaseDepth
   , peNumCases
@@ -58,17 +62,19 @@ module Environment.Types
 
 import Core
 import Data.Map.Strict (Map)
+import Data.IntMap.Strict (IntMap)
 import Data.Set (Set)
+import qualified Data.HashMap.Strict as HashMap
 
 -- TriggerIndex type alias for incremental theorem matching
 -- Maps FactKey to list of TheoremTriggers
-type TriggerIndex = Map FactKey [TheoremTrigger]
+type TriggerIndex = HashMap.HashMap FactKey [TheoremTrigger]
 
 -- Provenance tracks how a fact or disjunction was derived
 data Provenance = Provenance
   { provDeps :: [Label]
   , provDisAncestors :: Set (DisjId, Int)
-  , provThm :: Maybe String
+  , provThm :: Maybe TheoremName
   } deriving stock (Eq, Show)
 
 -- Entries that track facts and disjunctions with metadata
@@ -78,16 +84,18 @@ data FactEntry = FactEntry
   , feProv :: Provenance
   , feUseful :: Bool
   , feDepth :: Int
+  , feKey :: FactKey
+  , feHash :: HashKey
   } deriving stock (Eq, Show)
 
 -- Backward compatibility accessors
+feConcThm :: FactEntry -> Maybe TheoremName
 feDependencies :: FactEntry -> [Label]
 feDependencies = provDeps . feProv
 
 feDisAncestors :: FactEntry -> Set (DisjId, Int)
 feDisAncestors = provDisAncestors . feProv
 
-feConcThm :: FactEntry -> Maybe String
 feConcThm = provThm . feProv
 
 data DisjunctionEntry = DisjunctionEntry
@@ -95,13 +103,14 @@ data DisjunctionEntry = DisjunctionEntry
   , deLabel :: DisjId
   , deProv :: Provenance
   , deUseful :: Bool
+  , deHash :: HashKey
   } deriving stock (Eq, Show)
 
 -- Backward compatibility accessors
+deConcThm :: DisjunctionEntry -> Maybe TheoremName
 deDisAncestors :: DisjunctionEntry -> Set (DisjId, Int)
 deDisAncestors = provDisAncestors . deProv
 
-deConcThm :: DisjunctionEntry -> Maybe String
 deConcThm = provThm . deProv
 
 data Labeled
@@ -112,8 +121,8 @@ data Labeled
 -- Structural key for disjunction deduplication
 -- Avoids string concatenation overhead
 data DisjunctionKey = DisjunctionKey
-  { dkFacts :: [(String, [Arg])]  -- Sorted facts by (name, args)
-  , dkThm :: Maybe String
+  { dkFacts :: [(PredName, [Arg])]  -- Sorted facts by (name, args)
+  , dkThm :: Maybe TheoremName
   , dkAncestors :: [(DisjId, Int)]  -- Sorted ancestors
   } deriving stock (Eq, Ord, Show)
 
@@ -122,7 +131,7 @@ data FactDatabase = FactDatabase
   { fdFacts :: [FactEntry]
   , fdOrderedFacts :: [Label]
   , fdFactLabels :: Map Label Labeled
-  , fdFactIndex :: Map FactKey [FactEntry]
+  , fdFactIndex :: IntMap [FactEntry]
   , fdDisjunctions :: [DisjunctionEntry]
   , fdDisjLabels :: Map DisjunctionKey DisjId
   } deriving stock (Show)
@@ -143,6 +152,16 @@ data GeneratorState = GeneratorState
   , gsCurLetter :: Char
   , gsCurSuffix :: Int
   , gsSymbolSet :: Set String
+  , gsSymbolTable :: Map String Symbol
+  , gsSymbolNames :: IntMap String
+  , gsNextSymbolId :: Int
+  , gsStats :: EnvStats
+  } deriving stock (Show)
+
+data EnvStats = EnvStats
+  { esFacts :: !Int
+  , esDisjunctions :: !Int
+  , esSymbols :: !Int
   } deriving stock (Show)
 
 -- Case analysis state
@@ -161,7 +180,7 @@ data ProofEnvironment = ProofEnvironment
   , peCaseState :: CaseState
   , peGenState :: GeneratorState
   , peTheorems :: [Thm]
-  , peThmNameDict :: Map String Thm
+  , peThmNameDict :: HashMap.HashMap TheoremName Thm
   , peTriggerIndex :: TriggerIndex
     -- ^ Index for incremental theorem matching
     -- Stores TheoremTrigger for each FactKey
@@ -172,7 +191,7 @@ data NewConclusion = NewConclusion
   { ncConclusion :: Conclusion
   , ncDependencies :: [Label]
   , ncDisAncestors :: Set (DisjId, Int)
-  , ncConcThm :: Maybe String
+  , ncConcThm :: Maybe TheoremName
   }
 
 -- | Create a Provenance from a NewConclusion
@@ -197,7 +216,7 @@ peFactLabels :: ProofEnvironment -> Map Label Labeled
 peFactLabels = fdFactLabels . peFactDB
 
 {-# INLINE peFactIndex #-}
-peFactIndex :: ProofEnvironment -> Map FactKey [FactEntry]
+peFactIndex :: ProofEnvironment -> IntMap [FactEntry]
 peFactIndex = fdFactIndex . peFactDB
 
 {-# INLINE peDisjunctions #-}
@@ -249,6 +268,18 @@ peCurSuffix = gsCurSuffix . peGenState
 {-# INLINE peSymbolSet #-}
 peSymbolSet :: ProofEnvironment -> Set String
 peSymbolSet = gsSymbolSet . peGenState
+
+{-# INLINE peSymbolTable #-}
+peSymbolTable :: ProofEnvironment -> Map String Symbol
+peSymbolTable = gsSymbolTable . peGenState
+
+{-# INLINE peSymbolNames #-}
+peSymbolNames :: ProofEnvironment -> IntMap String
+peSymbolNames = gsSymbolNames . peGenState
+
+{-# INLINE peNextSymbolId #-}
+peNextSymbolId :: ProofEnvironment -> Int
+peNextSymbolId = gsNextSymbolId . peGenState
 
 -- CaseState accessors
 {-# INLINE peCaseDepth #-}

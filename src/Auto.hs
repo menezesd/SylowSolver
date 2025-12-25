@@ -11,8 +11,12 @@
 --   * The iteration limit is reached
 --
 module Auto
-  ( autoSolve
+  ( SolverConfig(..)
+  , defaultConfig
+  , autoSolve
+  , autoSolveWith
   , matchFactsToTheorem
+  , solveOrder
   ) where
 
 -- Standard library
@@ -29,12 +33,22 @@ import EnvPrint (printRelevantFacts)
 import IncrementalMatching (findTriggeredMatches, matchPremises)
 import ProofMonad (runProofM)
 import Environment.FactsMonadic (applyThmM)
+import Predicates (falseFact, group, order, simple)
+import Theorems (thmList, thmNames)
 
 data SearchStatus
   = GoalFound
   | QueueExhausted
   | IterationLimitReached
   deriving (Eq, Show)
+
+data SolverConfig = SolverConfig
+  { scMaxIterations :: Int
+  , scBatchSize :: Int
+  } deriving (Eq, Show)
+
+defaultConfig :: SolverConfig
+defaultConfig = SolverConfig { scMaxIterations = 1000, scBatchSize = 8 }
 
 data SearchState = SearchState
   { ssEnv :: ProofEnvironment
@@ -52,7 +66,10 @@ matchFactsToTheorem premises env newFacts =
       ]
 
 autoSolve :: ProofEnvironment -> IO Bool
-autoSolve env0 = do
+autoSolve = autoSolveWith defaultConfig
+
+autoSolveWith :: SolverConfig -> ProofEnvironment -> IO Bool
+autoSolveWith cfg env0 = do
   let initialState =
         SearchState
           { ssEnv = env0
@@ -73,19 +90,13 @@ autoSolve env0 = do
         Left status -> (ssEnv st, status)
         Right st' -> runSearch st'
 
-    maxIterations :: Int
-    maxIterations = 1000
-
-    batchSize :: Int
-    batchSize = 8
-
     stepSearch :: SearchState -> Either SearchStatus SearchState
     stepSearch st
       | peGoalAchieved env = Left GoalFound
-      | ssIter st >= maxIterations = Left IterationLimitReached
+      | ssIter st >= scMaxIterations cfg = Left IterationLimitReached
       | Seq.null queue = Left QueueExhausted
       | otherwise =
-          let (batch, restQueue) = Seq.splitAt batchSize queue
+          let (batch, restQueue) = Seq.splitAt (scBatchSize cfg) queue
               factsToProcess = [(fact, feLabel fact) | fact <- toList batch, Set.notMember (feLabel fact) processed]
            in if null factsToProcess
                 then Right st { ssQueue = restQueue, ssIter = ssIter st + 1 }
@@ -133,3 +144,11 @@ autoSolve env0 = do
     reverseOnto :: [a] -> [a] -> [a]
     reverseOnto [] !ys = ys
     reverseOnto (x:xs) !ys = reverseOnto xs (x:ys)
+
+-- | Convenience API to solve a simple-group-of-order-n goal with default settings.
+solveOrder :: Int -> IO Bool
+solveOrder n = do
+  let facts = [group (sym "G"), order (sym "G") (num n), simple (sym "G")]
+      goal = falseFact
+      env = initEnv facts thmList thmNames goal
+  autoSolve env

@@ -35,11 +35,11 @@ canonicalDisjunctionSignature :: DisjunctionEntry -> String
 canonicalDisjunctionSignature disj =
   let sigs =
         sort
-          [ factName f ++ ":" ++ intercalate "," (map argText (factArgs f))
+          [ predNameText (factName f) ++ ":" ++ intercalate "," (map argText (factArgs f))
           | f <- deFacts disj
           ]
       prov =
-        map ("thm:" ++) (maybeToList (deConcThm disj))
+        map ("thm:" ++) (maybeToList (fmap theoremNameText (deConcThm disj)))
           ++ [ "anc:" ++ intercalate "," ancLabels
              | not (Set.null (deDisAncestors disj))
              , let ancLabels = sort (Set.toList (Set.map disjLabelText (deDisAncestors disj)))

@@ -6,6 +6,7 @@ build-type:     Simple
 common common-deps
   build-depends:       base >=4.14 && <5
                      , containers
+                     , unordered-containers
                      , hashable
                      , mtl
                      , microlens
@@ -17,6 +18,7 @@ common common-deps
                        -Wno-unused-do-bind
                        -Wincomplete-record-updates
                        -Wincomplete-uni-patterns
+                       -Werror
                        -O2
 
 library
@@ -26,6 +28,7 @@ library
                      , Core
                      , Env
                      , Environment.Init                     , Environment.FactsMonadic
+                     , Environment.Builders
                      , Environment.Goals
                      , Environment.Labels
                      , Environment.Lenses

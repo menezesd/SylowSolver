@@ -1,6 +1,8 @@
 module Predicates
-  ( -- Predicate name constants
-    pGroup
+  ( PredName(..)
+  , predNameText
+  , customPred
+  , pGroup
   , pOrder
   , pSylowOrder
   , pSylowPSubgroup
@@ -60,39 +62,37 @@ module Predicates
 
 import Core
 
--- Predicate name constants
-pGroup, pOrder, pSylowOrder, pSylowPSubgroup :: String
-pAlternatingGroup, pNumSylow, pSimple, pNotSimple :: String
-pSubgroup, pDivides, pFalse, pIndex :: String
-pTransitiveAction, pOrderPkLowerBound, pMoreThanOneSylow :: String
-pIntersection, pNormalizer, pOrderLowerBound :: String
-pMaxSylowIntersection, pProperSubgroup, pNormal :: String
-pNormalizerOfSylowIntersection :: String
+pGroup, pOrder, pSylowOrder, pSylowPSubgroup :: PredName
+pAlternatingGroup, pNumSylow, pSimple, pNotSimple :: PredName
+pSubgroup, pDivides, pFalse, pIndex :: PredName
+pTransitiveAction, pOrderPkLowerBound, pMoreThanOneSylow :: PredName
+pIntersection, pNormalizer, pOrderLowerBound :: PredName
+pMaxSylowIntersection, pProperSubgroup, pNormal :: PredName
+pNormalizerOfSylowIntersection :: PredName
 
-pGroup = "group"
-pOrder = "order"
-pSylowOrder = "sylow_order"
-pSylowPSubgroup = "sylow_p_subgroup"
-pAlternatingGroup = "alternating_group"
-pNumSylow = "num_sylow"
-pSimple = "simple"
-pNotSimple = "not_simple"
-pSubgroup = "subgroup"
-pDivides = "divides"
-pFalse = "false"
-pIndex = "index"
-pTransitiveAction = "transitive_action"
-pOrderPkLowerBound = "order_pk_lower_bound"
-pMoreThanOneSylow = "more_than_one_sylow"
-pIntersection = "intersection"
-pNormalizer = "normalizer"
-pOrderLowerBound = "order_lower_bound"
-pMaxSylowIntersection = "max_sylow_intersection"
-pProperSubgroup = "proper_subgroup"
-pNormal = "normal"
-pNormalizerOfSylowIntersection = "normalizer_of_sylow_intersection"
+pGroup = PGroup
+pOrder = POrder
+pSylowOrder = PSylowOrder
+pSylowPSubgroup = PSylowPSubgroup
+pAlternatingGroup = PAlternatingGroup
+pNumSylow = PNumSylow
+pSimple = PSimple
+pNotSimple = PNotSimple
+pSubgroup = PSubgroup
+pDivides = PDivides
+pFalse = PFalse
+pIndex = PIndex
+pTransitiveAction = PTransitiveAction
+pOrderPkLowerBound = POrderPkLowerBound
+pMoreThanOneSylow = PMoreThanOneSylow
+pIntersection = PIntersection
+pNormalizer = PNormalizer
+pOrderLowerBound = POrderLowerBound
+pMaxSylowIntersection = PMaxSylowIntersection
+pProperSubgroup = PProperSubgroup
+pNormal = PNormal
+pNormalizerOfSylowIntersection = PNormalizerOfSylowIntersection
 
--- Fact constructors using the constants
 group :: Arg -> Fact
 group g = Fact pGroup [g]
 

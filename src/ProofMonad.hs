@@ -17,6 +17,8 @@ module ProofMonad
   , updateGoalStateM
   , updateGenStateM
   , updateCaseStateM
+  , internSymbolM
+  , symM
   ) where
 
 -- Standard library
@@ -25,7 +27,7 @@ import Control.Monad.State.Strict
 import Core
 import Environment.Types
 import Environment.Labels (newDisjunctionLabel, newFactLabel)
-import Environment.Symbols (generateNewSymbol)
+import Environment.Symbols (generateNewSymbol, internSymbol)
 
 -- The proof monad is a State monad over ProofEnvironment
 newtype ProofM a = ProofM { unProofM :: State ProofEnvironment a }
@@ -68,8 +70,16 @@ newDisjLabelM :: DisjunctionEntry -> ProofM DisjId
 newDisjLabelM disj = state (\env -> newDisjunctionLabel env disj)
 
 -- Generate a new unique symbol
-generateSymbolM :: ProofM String
+generateSymbolM :: ProofM Symbol
 generateSymbolM = state generateNewSymbol
+
+-- Intern a symbol string into the symbol table and return the interned Symbol
+internSymbolM :: String -> ProofM Symbol
+internSymbolM s = state (internSymbol s)
+
+-- Monadic constructor for an interned concrete symbol argument
+symM :: String -> ProofM Arg
+symM s = Sym <$> internSymbolM s
 
 -- Update sub-structures in a monadic style
 updateFactDBM :: (FactDatabase -> FactDatabase) -> ProofM ()

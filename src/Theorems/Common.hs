@@ -61,12 +61,12 @@ fromMaybeList = fromMaybe []
 -- | Create a HyperTheorem (dynamic rule)
 {-# INLINE hyper #-}
 hyper :: String -> [Fact] -> ([Fact] -> Maybe [Conclusion]) -> Thm
-hyper name premises rule = Hyper (HyperTheorem name premises rule)
+hyper name premises rule = Hyper (HyperTheorem (mkTheoremName name) premises rule)
 
 -- | Create a standard Theorem (static rewrite rule)
 {-# INLINE stdThm #-}
 stdThm :: String -> [Fact] -> [Fact] -> Thm
-stdThm name premises conclusions = Std (Theorem name premises conclusions)
+stdThm name premises conclusions = Std (Theorem (mkTheoremName name) premises conclusions)
 
 -- | Extract numeric value from an Arg
 {-# INLINE asNum #-}

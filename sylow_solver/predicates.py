@@ -1,0 +1,26 @@
+from enum import StrEnum
+
+
+class Predicates(StrEnum):
+    GROUP = "group"
+    ORDER = "order"
+    SYLOW_ORDER = "sylow_order"
+    SYLOW_P_SUBGROUP = "sylow_p_subgroup"
+    NUM_SYLOW = "num_sylow"
+    ALTERNATING_GROUP = "alternating_group"
+    SIMPLE = "simple"
+    NOT_SIMPLE = "not_simple"
+    SUBGROUP = "subgroup"
+    NORMAL = "normal"
+    DIVIDES = "divides"
+    FALSE = "false"
+    INDEX = "index"
+    TRANSITIVE_ACTION = "transitive_action"
+    ORDER_PK_LOWER_BOUND = "order_pk_lower_bound"
+    MORE_THAN_ONE_SYLOW = "more_than_one_sylow"
+    INTERSECTION = "intersection"
+    NORMALIZER = "normalizer"
+    ORDER_LOWER_BOUND = "order_lower_bound"
+    MAX_SYLOW_INTERSECTION = "max_sylow_intersection"
+    PROPER_SUBGROUP = "proper_subgroup"
+    NORMALIZER_OF_SYLOW_INTERSECTION = "normalizer_of_sylow_intersection"

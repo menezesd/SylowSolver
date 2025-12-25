@@ -14,12 +14,15 @@ module ProofTrace
 import Core
 import Env
 import Environment.Types (peOrderedFacts, peFactLabels)
+import Environment.Symbols (symbolTable, SymbolTable)
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 -- ProofStep now wraps FactEntry directly instead of reconstructing fields
 data ProofStep = ProofStep
   { psFactEntry :: FactEntry
+  , psSymbols :: SymbolTable
   } deriving (Eq)
 
 -- Accessor functions for backward compatibility
@@ -35,7 +38,7 @@ psDependencies = feDependencies . psFactEntry
 psDisAncestors :: ProofStep -> [(DisjId, Int)]
 psDisAncestors = Set.toList . feDisAncestors . psFactEntry
 
-psConcThm :: ProofStep -> Maybe String
+psConcThm :: ProofStep -> Maybe TheoremName
 psConcThm = feConcThm . psFactEntry
 
 psUseful :: ProofStep -> Bool
@@ -45,10 +48,11 @@ buildTrace :: ProofEnvironment -> [ProofStep]
 buildTrace env = mapMaybeStep (reverse (peOrderedFacts env))
   -- Reverse to get chronological order (fdOrderedFacts is newest-first)
   where
+    symTbl = symbolTable env
     mapMaybeStep [] = []
     mapMaybeStep (lbl : rest) =
       case Map.lookup lbl (peFactLabels env) of
-        Just (LFactEntry fe) -> ProofStep fe : mapMaybeStep rest
+        Just (LFactEntry fe) -> ProofStep fe symTbl : mapMaybeStep rest
         _ -> mapMaybeStep rest
 
 labelText :: Label -> String
@@ -58,5 +62,5 @@ labelText lbl =
     LDisj (DisjId n) -> "D" ++ show n
 
 instance Show ProofStep where
-  show (ProofStep fe) =
-    labelText (LFact (feLabel fe)) ++ " : " ++ ppFact (feFact fe)
+  show (ProofStep fe tbl) =
+    labelText (LFact (feLabel fe)) ++ " : " ++ ppFactWith (Map.fromList (IntMap.toList tbl)) (feFact fe)

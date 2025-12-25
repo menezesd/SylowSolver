@@ -7,17 +7,19 @@ import Environment.Types
 import Environment.FactsMonadic (addNewFactsM)
 import ProofMonad (execProofM)
 import Theorems (buildTriggerIndex)
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Map.Strict as Map
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Set as Set
 
 -- Initialize proof environment with initial facts, theorems, and goal
-initEnv :: [Fact] -> [Thm] -> Map.Map String Thm -> Fact -> ProofEnvironment
+initEnv :: [Fact] -> [Thm] -> HashMap.HashMap TheoremName Thm -> Fact -> ProofEnvironment
 initEnv facts theorems thmDict goal =
   let baseFactDB = FactDatabase
         { fdFacts = []
         , fdOrderedFacts = []
         , fdFactLabels = Map.empty
-        , fdFactIndex = Map.empty
+        , fdFactIndex = IntMap.empty
         , fdDisjunctions = []
         , fdDisjLabels = Map.empty
         }
@@ -34,6 +36,10 @@ initEnv facts theorems thmDict goal =
         , gsCurLetter = 'A'
         , gsCurSuffix = 0
         , gsSymbolSet = Set.empty
+        , gsSymbolTable = Map.empty
+        , gsSymbolNames = IntMap.empty
+        , gsNextSymbolId = 0
+        , gsStats = EnvStats 0 0 0
         }
       baseCaseState = CaseState
         { csCaseDepth = 0
@@ -55,8 +61,4 @@ initEnv facts theorems thmDict goal =
       initialConcs =
         [ NewConclusion (CFact f) [] Set.empty Nothing | f <- facts
         ]
-      envWithFacts = execProofM (addNewFactsM initialConcs) base
-      initialSymbols =
-        Set.fromList
-          [ argText arg | Fact _ args <- facts, arg <- args ]
-   in updateGenState (\gs -> gs { gsSymbolSet = initialSymbols }) envWithFacts
+   in execProofM (addNewFactsM initialConcs) base

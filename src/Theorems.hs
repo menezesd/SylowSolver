@@ -5,8 +5,7 @@ module Theorems
   ) where
 
 import Core
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import qualified Data.HashMap.Strict as HashMap
 import Environment.Types (TriggerIndex)
 import Theorems.Counting
 import Theorems.Normalizer (normalizerEverythingImpliesNormal, normalizerSylowIntersection, normalSubgroupToNotSimple, ruleOutNormalizerOfIntersectionOrder)
@@ -37,8 +36,8 @@ thmList =
   , ruleOutNormalizerOfIntersectionOrder
   ]
 
-thmNames :: Map String Thm
-thmNames = Map.fromList [(thmName thm, thm) | thm <- thmList]
+thmNames :: HashMap.HashMap TheoremName Thm
+thmNames = HashMap.fromList [(thmId thm, thm) | thm <- thmList]
 
 -- Build trigger index for incremental theorem matching
 buildTriggerIndex :: [Thm] -> TriggerIndex
@@ -48,4 +47,4 @@ buildTriggerIndex thms =
                  , let premises = thmFacts thm
                  , (i, premise) <- zip [0..] premises
                  ]
-   in Map.fromListWith (++) [(k, [t]) | (k, t) <- triggers]
+   in HashMap.fromListWith (++) [(k, [t]) | (k, t) <- triggers]

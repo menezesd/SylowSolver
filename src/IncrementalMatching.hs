@@ -21,8 +21,11 @@ module IncrementalMatching
 
 import Core
 import Data.List (foldl')
+import Data.Hashable (hash)
 import Environment.Types (TriggerIndex)
 import qualified Data.Map.Strict as Map
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.IntMap.Strict as IntMap
 import Env
 import Environment.Types (peFactIndex)
 import Unification
@@ -33,7 +36,7 @@ findTriggeredMatches :: ProofEnvironment -> FactEntry -> TriggerIndex -> [(Thm, 
 findTriggeredMatches env newFact triggerIndex =
   let fact = feFact newFact
       key = factKey fact
-      triggers = Map.findWithDefault [] key triggerIndex
+      triggers = HashMap.lookupDefault [] key triggerIndex
 
       -- For each trigger, try to complete the match
       tryTrigger trigger =
@@ -74,9 +77,10 @@ matchNewFactAtPosition env newFact premises targetIdx
 matchFactsToTemplate :: Fact -> ProofEnvironment -> Substitution -> [(FactEntry, Substitution)]
 matchFactsToTemplate template env initMap =
   let candidateFacts =
-        Map.findWithDefault [] (factKey template) (peFactIndex env)
+        IntMap.findWithDefault [] (hash template) (peFactIndex env)
    in [ (factEntry, matchMap)
       | factEntry <- candidateFacts
+      , factKey (feFact factEntry) == factKey template
       , let fact = feFact factEntry
       , Right matchMap <- [unifyFact initMap template fact]
       ]

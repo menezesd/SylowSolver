@@ -22,8 +22,9 @@ The Python implementation serves as a direct realization of the theorem-proving 
 The core logic is distributed across the following Python files:
 \begin{table}[h!]\centering
 \begin{tabular}{ll}
-\texttt{auto2.py} & Main automated theorem prover logic, including Fact, Disjunction, Theorem classes, and the auto\_solve function. \\
-\texttt{sylow2.py} & Utility functions for number theory, such as primality tests, prime factorization, and Sylow p-subgroup calculations.\end{tabular}
+\texttt{auto2.py} & Command-line entrypoint for running the solver interactively or in batch. \\
+\texttt{sylow2.py} & Utility functions for number theory, such as primality tests, prime factorization, and Sylow p-subgroup calculations. \\
+\texttt{sylow\_solver/} & Solver package: fact/disjunction data structures, theorem base classes, proof search engine, default theorems, predicates, and config/logging helpers.\end{tabular}
     \caption{Python Modules}
     \label{tab:python_modules}
 \end{table}
@@ -45,6 +46,18 @@ python auto2.py 12 24
 \end{verbatim}
 The script will process each provided order and output the proof result.
 
+\subsection{Additional CLI Options}
+The solver supports a few tuning flags:
+\begin{itemize}
+\item \texttt{--max-iterations}: limit the proof search loop (default 1000).
+\item \texttt{--batch-size}: number of facts pulled from the agenda per iteration (default 8).
+\item \texttt{--verbose}: enable progress logging (iteration counts and success/failure).
+\end{itemize}
+Example with custom limits:
+\begin{verbatim}
+python auto2.py --max-iterations 500 --batch-size 4 24 30
+\end{verbatim}
+
 \section{Facts, Arguments, and Matching Specifics}
 The Python implementation uses specific syntax for defining facts and templates, particularly for placeholders and exact matches, to facilitate dynamic theorem application.
 
@@ -60,7 +73,7 @@ Strings in templates that start with an asterisk (e.g., \texttt{*1}) indicate th
 Numeric arguments (integers) are typically passed as strings in facts and templates, and then converted to their integer representation when needed for arithmetic operations or comparisons within theorem rules. For example, in a fact representing an order like \texttt{(order, G, "12")}, "12" is a string that can be parsed as an integer by the theorem logic. While the internal `Fact` representation allows for direct integer types, the external input and template matching often involve string representations of numbers.
 
 \section{Theorem Set}
-The Python implementation includes a set of theorems mirroring standard Sylow-based reasoning, similar to the Haskell version. These theorems are defined within `auto2.py` and `sylow2.py` and cover:
+The Python implementation includes a set of theorems mirroring standard Sylow-based reasoning, similar to the Haskell version. These theorems are defined within `sylow\_solver/theorems.py` (with number-theoretic helpers in `sylow2.py`) and cover:
 \begin{itemize}
 \item Sylow subgroup counts and existence.
 \item Normality from a unique Sylow subgroup.

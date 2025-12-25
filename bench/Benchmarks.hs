@@ -2,7 +2,7 @@ module Main where
 
 import Criterion.Main
 import Criterion.Types (Config(..))
-import qualified Data.Map.Strict as Map
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Set as Set
 
 import Auto (prove)
@@ -11,34 +11,34 @@ import Env
 import Environment.Types
 import Environment.FactsMonadic (addNewFactsM)
 import ProofMonad (execProofM)
-import Predicates (group, order)
+import Predicates (customPred, group, order)
 import Theorems
 import Unification
 
 -- Benchmark: Creating and populating environments
 benchEnvCreation :: Benchmark
 benchEnvCreation = bgroup "Environment Creation"
-  [ bench "initEnv" $ nf (\n -> initEnv [] allTheorems Map.empty (group (sym "G"))) ()
+  [ bench "initEnv" $ nf (\n -> initEnv [] allTheorems HashMap.empty (group (sym "G"))) ()
   , bench "addNewFacts (1 fact)" $ nf addOneFact ()
   , bench "addNewFacts (10 facts)" $ nf addTenFacts ()
   , bench "addNewFacts (100 facts)" $ nf addHundredFacts ()
   ]
   where
     addOneFact () =
-      let env = initEnv [] allTheorems Map.empty (group (sym "G"))
+      let env = initEnv [] allTheorems HashMap.empty (group (sym "G"))
           facts = [NewConclusion (CFact (order (sym "G") (sym "6"))) [] Set.empty Nothing]
       in execProofM (addNewFactsM facts) env
 
     addTenFacts () =
-      let env = initEnv [] allTheorems Map.empty (group (sym "G"))
-          facts = [ NewConclusion (CFact (Fact ("pred" ++ show i) [sym "x"])) [] Set.empty Nothing
+      let env = initEnv [] allTheorems HashMap.empty (group (sym "G"))
+          facts = [ NewConclusion (CFact (Fact (customPred ("pred" ++ show i)) [sym "x"])) [] Set.empty Nothing
                   | i <- [1..10 :: Int]
                   ]
       in execProofM (addNewFactsM facts) env
 
     addHundredFacts () =
-      let env = initEnv [] allTheorems Map.empty (group (sym "G"))
-          facts = [ NewConclusion (CFact (Fact ("pred" ++ show i) [sym "x"])) [] Set.empty Nothing
+      let env = initEnv [] allTheorems HashMap.empty (group (sym "G"))
+          facts = [ NewConclusion (CFact (Fact (customPred ("pred" ++ show i)) [sym "x"])) [] Set.empty Nothing
                   | i <- [1..100 :: Int]
                   ]
       in execProofM (addNewFactsM facts) env
@@ -54,20 +54,20 @@ benchUnification = bgroup "Unification"
   ]
   where
     unifyIdentical () =
-      unify (Fact "foo" [sym "a", sym "b"]) (Fact "foo" [sym "a", sym "b"])
+      unify (Fact (customPred "foo") [sym "a", sym "b"]) (Fact (customPred "foo") [sym "a", sym "b"])
 
     unifyOneVar () =
-      unify (Fact "foo" [var "X"]) (Fact "foo" [sym "a"])
+      unify (Fact (customPred "foo") [var "X"]) (Fact (customPred "foo") [sym "a"])
 
     unifyFiveVars () =
-      unify (Fact "foo" [var "A", var "B", var "C", var "D", var "E"])
-            (Fact "foo" [sym "a", sym "b", sym "c", sym "d", sym "e"])
+      unify (Fact (customPred "foo") [var "A", var "B", var "C", var "D", var "E"])
+            (Fact (customPred "foo") [sym "a", sym "b", sym "c", sym "d", sym "e"])
 
     unifyFailName () =
-      unify (Fact "foo" []) (Fact "bar" [])
+      unify (Fact (customPred "foo") []) (Fact (customPred "bar") [])
 
     unifyFailArity () =
-      unify (Fact "foo" [sym "a"]) (Fact "foo" [sym "a", sym "b"])
+      unify (Fact (customPred "foo") [sym "a"]) (Fact (customPred "foo") [sym "a", sym "b"])
 
 -- Benchmark: Theorem matching
 benchTheoremMatching :: Benchmark
@@ -77,7 +77,7 @@ benchTheoremMatching = bgroup "Theorem Matching"
   ]
   where
     matchSimple () =
-      let env = initEnv [] allTheorems Map.empty (group (sym "G"))
+      let env = initEnv [] allTheorems HashMap.empty (group (sym "G"))
           env' = execProofM (addNewFactsM [NewConclusion (CFact (order (sym "G") (sym "6"))) [] Set.empty Nothing]) env
       in length (peFacts env')
 

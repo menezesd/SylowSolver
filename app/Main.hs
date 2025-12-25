@@ -13,32 +13,46 @@ main :: IO ()
 main = do
   args <- getArgs
   case parseArgs args of
-    [] -> interactiveLoop
-    orders -> mapM_ runOrder orders
+    Left err -> putStrLn err
+    Right (cfg, orders) ->
+      case orders of
+        [] -> interactiveLoop cfg
+        os -> mapM_ (runOrder cfg) os
   where
-    interactiveLoop = do
+    interactiveLoop cfg = do
       putStr "Enter a group order (blank to quit): "
       hFlush stdout
       line <- getLine
       if null line
         then pure ()
         else do
-          runOrder line
-          interactiveLoop
+          runOrder cfg line
+          interactiveLoop cfg
 
-    runOrder line =
+    runOrder cfg line =
       case readMaybe line :: Maybe Int of
         Just n -> do
-          -- Use Num constructor for efficient numeric handling
           let facts = [group (sym "G"), order (sym "G") (num n), simple (sym "G")]
               goal = falseFact
               env = initEnv facts thmList thmNames goal
-          _ <- autoSolve env
+          _ <- autoSolveWith cfg env
           pure ()
         Nothing -> do
           putStrLn $ "Invalid order (not an integer): " ++ line
 
-    parseArgs [] = []
-    parseArgs ("--order" : n : rest) = n : parseArgs rest
-    parseArgs ("--order" : []) = []
-    parseArgs (arg : rest) = arg : parseArgs rest
+    parseArgs :: [String] -> Either String (SolverConfig, [String])
+    parseArgs = go defaultConfig []
+      where
+        go cfg acc [] = Right (cfg, reverse acc)
+        go cfg acc ("--max-iterations" : n : rest) =
+          case readMaybe n of
+            Just i -> go cfg { scMaxIterations = i } acc rest
+            Nothing -> Left $ "Invalid --max-iterations: " ++ n
+        go cfg acc ("--batch-size" : n : rest) =
+          case readMaybe n of
+            Just i -> go cfg { scBatchSize = i } acc rest
+            Nothing -> Left $ "Invalid --batch-size: " ++ n
+        go cfg acc ("--order" : n : rest) = go cfg (n : acc) rest
+        go cfg acc (arg : rest)
+          | Just i <- readMaybe arg = go cfg (arg : acc) rest
+          | otherwise = Left $ "Unrecognized argument: " ++ arg

@@ -19,7 +19,7 @@ showProofTrace = concatMap showStep
           , case psConcThm step of
               Just thmName' ->
                 ( "    by thm "
-                    ++ thmName'
+                    ++ theoremNameText thmName'
                     ++ " applied to facts "
                     ++ unwords (map labelText (psDependencies step))
                 )

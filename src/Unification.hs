@@ -31,7 +31,7 @@ type Substitution = Map String Arg
 
 -- Unification errors
 data UnificationError
-  = NameMismatch String String
+  = NameMismatch PredName PredName
   | ArityMismatch Int Int
   | ExactMismatch Arg Arg -- Changed from String String
   | ConflictingBinding String Arg Arg -- Changed to Arg Arg
@@ -68,21 +68,21 @@ unifyArg subst tArg fArg =
   case (tArg, fArg) of
     -- Exact matches: structural comparison
     (Exact n1, Exact n2) | n1 == n2 -> Right subst
-    (Exact n1, Sym n2) | n1 == n2 -> Right subst
+    (Exact n1, Sym sym2) | n1 == symbolName sym2 -> Right subst
     (Exact n, Num i) | n == show i -> Right subst
-    (Exact n, _) -> Left (ExactMismatch tArg fArg)
+    (Exact _, _) -> Left (ExactMismatch tArg fArg)
 
     -- Sym matches: structural comparison
     (Sym n1, Sym n2) | n1 == n2 -> Right subst
-    (Sym n1, Exact n2) | n1 == n2 -> Right subst
-    (Sym n, Num i) | n == show i -> Right subst
-    (Sym n, _) -> Left (ExactMismatch tArg fArg)
+    (Sym (Symbol _ n1), Exact n2) | n1 == n2 -> Right subst
+    (Sym symVal, Num i) | symbolName symVal == show i -> Right subst
+    (Sym _, _) -> Left (ExactMismatch tArg fArg)
 
     -- Num matches: structural comparison
     (Num i1, Num i2) | i1 == i2 -> Right subst
-    (Num i, Sym n) | show i == n -> Right subst
+    (Num i, Sym symVal) | show i == symbolName symVal -> Right subst
     (Num i, Exact n) | show i == n -> Right subst
-    (Num i, _) -> Left (ExactMismatch tArg fArg)
+    (Num _, _) -> Left (ExactMismatch tArg fArg)
 
     -- Var: binds to anything (need string representation for substitution)
     (Var name, _) ->
@@ -134,4 +134,3 @@ applySubstToArg subst arg =
         Nothing -> arg
     Sym _ -> arg
     Num _ -> arg
-

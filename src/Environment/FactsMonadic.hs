@@ -7,6 +7,7 @@ module Environment.FactsMonadic
 
 import Control.Monad (when)
 import Data.Maybe (fromMaybe)
+import Environment.Builders
 import Core
 import Environment.Types
 import Environment.Goals (updateGoalAchieved, updateUseful)
@@ -15,38 +16,26 @@ import ProofMonad
 import Unification (applyStdThm)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.IntMap.Strict as IntMap
 
 -- Add a single fact in monadic style
 addFactM :: NewConclusion -> Fact -> ProofM FactEntry
 addFactM nc f = do
-  lbl <- newLabelM
-
-  -- Collect symbols
-  let symbols' = Set.fromList (map argText (factArgs f))
-  updateGenStateM (\gs -> gs { gsSymbolSet = Set.union (gsSymbolSet gs) symbols' })
-
-  -- Create entry
-  caseDepth <- getsEnv peCaseDepth
-  let prov = mkProvenance nc
-      entry = FactEntry
-        { feFact = f
-        , feLabel = lbl
-        , feProv = prov
-        , feUseful = False
-        , feDepth = caseDepth
-        }
+  BuiltFact entry <- buildFact nc f
+  let lbl = feLabel entry
 
   -- Update fact database
   updateFactDBM $ \db -> db
     { fdFactLabels = Map.insert (LFact lbl) (LFactEntry entry) (fdFactLabels db)
     , fdFacts = entry : fdFacts db
     , fdOrderedFacts = LFact lbl : fdOrderedFacts db
-    , fdFactIndex = Map.insertWith (++) (factKey f) [entry] (fdFactIndex db)
+    , fdFactIndex = IntMap.insertWith (++) (unHashKey (feHash entry)) [entry] (fdFactIndex db)
     }
+  updateGenStateM $ \gs -> gs { gsStats = (gsStats gs) { esFacts = esFacts (gsStats gs) + 1 } }
 
   -- Check if this fact achieves the goal
   goal <- getsEnv peGoal
-  when (f == goal) $ do
+  when (feFact entry == goal) $ do
     updateGoalStateM $ \gs -> gs { gsDisCombos = ncDisAncestors nc : gsDisCombos gs }
     modifyEnv (updateUseful (LFact lbl))
     modifyEnv updateGoalAchieved
@@ -56,18 +45,11 @@ addFactM nc f = do
 -- Add a disjunction in monadic style
 addDisjunctionM :: NewConclusion -> [Fact] -> ProofM [FactEntry]
 addDisjunctionM nc fs = do
-  -- Create disjunction entry
-  let prov = mkProvenance nc
-      disj = DisjunctionEntry
-        { deFacts = fs
-        , deLabel = DisjId 0  -- Placeholder
-        , deProv = prov
-        , deUseful = False
-        }
+  BuiltDisjunction disjEntry subConcs <- buildDisjunction nc fs
 
   -- Get or create label
-  lbl <- newDisjLabelM disj
-  let disj' = disj { deLabel = lbl }
+  lbl <- newDisjLabelM disjEntry
+  let disj' = disjEntry { deLabel = lbl }
 
   -- Update fact database
   updateFactDBM $ \db -> db
@@ -75,13 +57,16 @@ addDisjunctionM nc fs = do
     , fdDisjunctions = disj' : fdDisjunctions db
     , fdOrderedFacts = LDisj lbl : fdOrderedFacts db
     }
+  updateGenStateM $ \gs -> gs { gsStats = (gsStats gs) { esDisjunctions = esDisjunctions (gsStats gs) + 1 } }
 
   -- Add sub-facts from disjunction
-  let subConcs =
-        [ NewConclusion (CFact f) [LDisj lbl] (Set.insert (lbl, i) (deDisAncestors disj')) (ncConcThm nc)
-        | (i, f) <- zip [0..] fs
+  let adjustedSubConcs =
+        [ conc { ncDependencies = [LDisj lbl]
+               , ncDisAncestors = Set.insert (lbl, i) (ncDisAncestors conc)
+               }
+        | (i, conc) <- zip [0..] subConcs
         ]
-  addNewFactsM subConcs
+  addNewFactsM adjustedSubConcs
 
 -- Add multiple new conclusions in monadic style
 addNewFactsM :: [NewConclusion] -> ProofM [FactEntry]
@@ -107,7 +92,7 @@ applyThmM thm facts = do
             Std t -> map CFact (applyStdThm t facts)
             Hyper t -> fromMaybe [] (hyperRule t (map feFact facts))
           deps = map (LFact . feLabel) facts
-          nc = [ NewConclusion c deps usedAnc (Just (thmName thm))
+          nc = [ NewConclusion c deps usedAnc (Just (thmId thm))
                | c <- concs
                ]
 
@@ -116,4 +101,3 @@ applyThmM thm facts = do
       let (env', nc') = replaceVariables env nc
       putEnv env'
       addNewFactsM nc'
-

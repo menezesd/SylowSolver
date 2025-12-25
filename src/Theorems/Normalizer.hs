@@ -6,7 +6,6 @@ module Theorems.Normalizer
   ) where
 
 import Core
-import Data.Maybe (fromMaybe)
 import Memoization (divisorsMemo, numSylowMemo)
 import Predicates
 import Theorems.Common (arg2, arg3, asNum, hyper, stdThm)
@@ -90,4 +89,3 @@ ruleOutNormalizerOfIntersectionOrder :: Thm
 ruleOutNormalizerOfIntersectionOrder = hyper "rule_out_normalizer_of_intersection_order"
   [normalizerOfSylowIntersection (var "p") (var "G") (var "T"), order (var "T") (var "k")]
   ruleRuleOutNormalizerOfIntersectionOrder
-
