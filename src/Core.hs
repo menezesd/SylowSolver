@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingStrategies #-}
+
 module Core
   ( Label(..)
   , FactId(..)
@@ -23,13 +25,13 @@ module Core
   , thmFacts
   ) where
 
-newtype FactId = FactId Int deriving (Eq, Ord, Show)
-newtype DisjId = DisjId Int deriving (Eq, Ord, Show)
+newtype FactId = FactId Int deriving stock (Eq, Ord, Show)
+newtype DisjId = DisjId Int deriving stock (Eq, Ord, Show)
 
 data Label
   = LFact FactId
   | LDisj DisjId
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 data Arg
   = Sym String
@@ -37,7 +39,7 @@ data Arg
   | Exact String
   | Fresh String
   | Num Int      -- Numeric argument for efficient number handling
-  deriving (Eq, Ord, Show)
+  deriving stock (Eq, Ord, Show)
 
 sym :: String -> Arg
 sym = Sym
@@ -54,6 +56,7 @@ fresh = Fresh
 num :: Int -> Arg
 num = Num
 
+{-# INLINE argText #-}
 argText :: Arg -> String
 argText arg =
   case arg of
@@ -73,26 +76,27 @@ argInt _ = Nothing
 data FactKey = FactKey
   { fkName :: String
   , fkArity :: Int
-  } deriving (Eq, Ord, Show)
+  } deriving stock (Eq, Ord, Show)
 
 -- Extract the FactKey from a Fact
+{-# INLINE factKey #-}
 factKey :: Fact -> FactKey
 factKey (Fact name args) = FactKey name (length args)
 
 data Fact = Fact
   { factName :: String
   , factArgs :: [Arg]
-  } deriving (Eq, Ord, Show)
+  } deriving stock (Eq, Ord, Show)
 
 data Disjunction = Disjunction
-  { disjFacts :: [Fact]
-  } deriving (Eq, Show)
+  { disjFacts :: [Fact]  -- Empty disjunction = FALSE
+  } deriving stock (Eq, Show)
 
 data Theorem = Theorem
   { theoremName :: String
   , theoremFacts :: [Fact]
   , theoremConcs :: [Fact]
-  } deriving (Eq, Show)
+  } deriving stock (Eq, Show)
 
 data HyperTheorem = HyperTheorem
   { hyperName :: String
@@ -100,9 +104,17 @@ data HyperTheorem = HyperTheorem
   , hyperRule :: [Fact] -> [Conclusion]
   }
 
+-- Manual Show instance since hyperRule is a function
+instance Show HyperTheorem where
+  show ht = "HyperTheorem " ++ show (hyperName ht)
+
 data Thm
   = Std Theorem
   | Hyper HyperTheorem
+
+instance Show Thm where
+  show (Std t) = "Std (" ++ show (theoremName t) ++ ")"
+  show (Hyper t) = "Hyper (" ++ show (hyperName t) ++ ")"
 
 -- A trigger represents a theorem premise that could be activated by a fact
 data TheoremTrigger = TheoremTrigger
@@ -114,11 +126,14 @@ data TheoremTrigger = TheoremTrigger
 data Conclusion
   = CFact Fact
   | CDisj Disjunction
+  deriving stock (Eq, Show)
 
+{-# INLINE thmName #-}
 thmName :: Thm -> String
 thmName (Std t) = theoremName t
 thmName (Hyper t) = hyperName t
 
+{-# INLINE thmFacts #-}
 thmFacts :: Thm -> [Fact]
 thmFacts (Std t) = theoremFacts t
 thmFacts (Hyper t) = hyperFacts t

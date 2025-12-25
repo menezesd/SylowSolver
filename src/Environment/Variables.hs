@@ -5,10 +5,8 @@ module Environment.Variables
 
 import Core
 import Environment.Types
-import Environment.Symbols
 import ProofMonad
 import Control.Monad (foldM)
-import Control.Monad.State.Strict
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
@@ -23,10 +21,10 @@ replaceVariablesM concs = do
 
     collectFreshVars :: Map String String -> NewConclusion -> ProofM (Map String String)
     collectFreshVars subst nc = do
-      let facts = case ncConclusion nc of
+      let factList = case ncConclusion nc of
             CFact f -> [f]
             CDisj (Disjunction fs) -> fs
-      foldM (processFactForFresh) subst facts
+      foldM (processFactForFresh) subst factList
 
     processFactForFresh :: Map String String -> Fact -> ProofM (Map String String)
     processFactForFresh subst (Fact _ args) =

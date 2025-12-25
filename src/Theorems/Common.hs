@@ -1,23 +1,106 @@
 module Theorems.Common
-  ( arg2
+  ( -- Argument extractors
+    arg2
   , arg3
-  , safeReadInt
+  -- Numeric extractors (combine arg extraction with Num pattern matching)
+  , withNum2
+  , withNum3
+  , withArg2Num
+  , withArg3Num
+  -- Helpers
+  , fromMaybeList
+  , asNum
+  , withNums
+  , guardList
+  -- Theorem constructors
+  , hyper
+  , stdThm
   ) where
 
+import Data.Maybe (fromMaybe)
+
 import Core
-import Text.Read (readMaybe)
 
-safeReadInt :: String -> Maybe Int
-safeReadInt = readMaybe
-
+-- | Extract two arguments from a fact
+{-# INLINE arg2 #-}
 arg2 :: Fact -> Maybe (Arg, Arg)
 arg2 fact =
   case factArgs fact of
     [a, b] -> Just (a, b)
     _ -> Nothing
 
+-- | Extract three arguments from a fact
+{-# INLINE arg3 #-}
 arg3 :: Fact -> Maybe (Arg, Arg, Arg)
 arg3 fact =
   case factArgs fact of
     [a, b, c] -> Just (a, b, c)
     _ -> Nothing
+
+-- | Extract 2 args where the last is numeric, apply function if successful
+{-# INLINE withNum2 #-}
+withNum2 :: Fact -> (Arg -> Int -> a) -> Maybe a
+withNum2 fact f =
+  case factArgs fact of
+    [a, Num n] -> Just (f a n)
+    _ -> Nothing
+
+-- | Extract 3 args where the last is numeric, apply function if successful
+{-# INLINE withNum3 #-}
+withNum3 :: Fact -> (Arg -> Arg -> Int -> a) -> Maybe a
+withNum3 fact f =
+  case factArgs fact of
+    [a, b, Num n] -> Just (f a b n)
+    _ -> Nothing
+
+-- | Unwrap Maybe list, defaulting to empty
+{-# INLINE fromMaybeList #-}
+fromMaybeList :: Maybe [a] -> [a]
+fromMaybeList = fromMaybe []
+
+-- | Create a HyperTheorem (dynamic rule)
+{-# INLINE hyper #-}
+hyper :: String -> [Fact] -> ([Fact] -> [Conclusion]) -> Thm
+hyper name premises rule = Hyper (HyperTheorem name premises rule)
+
+-- | Create a standard Theorem (static rewrite rule)
+{-# INLINE stdThm #-}
+stdThm :: String -> [Fact] -> [Fact] -> Thm
+stdThm name premises conclusions = Std (Theorem name premises conclusions)
+
+-- | Extract numeric value from an Arg
+{-# INLINE asNum #-}
+asNum :: Arg -> Maybe Int
+asNum (Num n) = Just n
+asNum _ = Nothing
+
+-- | Apply a function if all arguments are numeric
+-- Usage: withNums [arg1, arg2, arg3] $ \[n1, n2, n3] -> ...
+{-# INLINE withNums #-}
+withNums :: [Arg] -> ([Int] -> a) -> Maybe a
+withNums args f = f <$> traverse asNum args
+
+-- | Extract 2 args from fact, convert last to Int, apply function
+-- Combines arg2 + asNum pattern
+{-# INLINE withArg2Num #-}
+withArg2Num :: Fact -> (Arg -> Int -> a) -> Maybe a
+withArg2Num fact f = do
+  (a, b) <- arg2 fact
+  n <- asNum b
+  pure (f a n)
+
+-- | Extract 3 args from fact, convert last to Int, apply function
+-- Combines arg3 + asNum pattern
+{-# INLINE withArg3Num #-}
+withArg3Num :: Fact -> (Arg -> Arg -> Int -> a) -> Maybe a
+withArg3Num fact f = do
+  (a, b, c) <- arg3 fact
+  n <- asNum c
+  pure (f a b n)
+
+-- | Conditional list: returns [x] if condition is true, else []
+-- Replaces: if cond then [x] else []
+{-# INLINE guardList #-}
+guardList :: Bool -> a -> [a]
+guardList True x = [x]
+guardList False _ = []

@@ -5,11 +5,11 @@ import Core
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Env
-import Environment.Types
-import Environment.Goals
 import Unification
 import Generators
-import Predicates (group, order) -- For dummy goal
+import Predicates (group) -- For dummy goal
+import NumberTheory
+import Memoization
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
@@ -53,6 +53,21 @@ tests =
         , testProperty "fdFactLabels contains all ordered facts" propFactLabelsComplete
         , testProperty "fdFacts are all in fdFactLabels" propFactsInLabels
         ]
+    , testGroup "Number Theory"
+        [ testProperty "divisors are actual divisors" propDivisorsCorrect
+        , testProperty "memoized divisors match pure" propDivisorsMemoCorrect
+        , testProperty "prime factors are prime" propPrimeFactorsArePrime
+        , testProperty "prime factorization reconstructs n" propPrimeFactorizationCorrect
+        , testProperty "memoized primeFactors match pure" propPrimeFactorsMemoCorrect
+        ]
+    , testGroup "FactKey"
+        [ testProperty "factKey is stable" propFactKeyStable
+        , testProperty "equal facts have equal keys" propEqualFactsEqualKeys
+        ]
+    , testGroup "Substitution"
+        [ testProperty "applying empty substitution is identity" propEmptySubstIdentity
+        , testProperty "substitution application is deterministic" propSubstDeterministic
+        ]
     ]
 
 propExactMatch :: String -> String -> Bool
@@ -66,7 +81,9 @@ propExactMatch g h =
       (env1, _) = addNewFacts env0 [NewConclusion (CFact fMatch) [] Set.empty Nothing, NewConclusion (CFact fNoMatch) [] Set.empty Nothing]
 
       matches = matchFactsToTheorem template env1 (peFacts env1)
-   in length matches == 1 && feFact (head (head matches)) == fMatch
+   in case matches of
+        [[entry]] -> feFact entry == fMatch
+        _ -> False
 
 propVarUnify :: String -> String -> Bool
 propVarUnify a b =
@@ -190,15 +207,15 @@ propInconsistentVarsFail = forAll genInconsistentVarPattern $ \(template, concre
 -- Fact equality properties
 
 propFactEqReflexive :: Fact -> Bool
-propFactEqReflexive f = factEquals f f
+propFactEqReflexive f = f == f
 
 propFactEqSymmetric :: Fact -> Fact -> Bool
-propFactEqSymmetric f1 f2 = factEquals f1 f2 == factEquals f2 f1
+propFactEqSymmetric f1 f2 = (f1 == f2) == (f2 == f1)
 
 propFactEqTransitive :: Fact -> Property
 propFactEqTransitive f =
   -- If f1 == f2 == f, then f1 == f (trivially true)
-  factEquals f f && factEquals f f ==> factEquals f f
+  f == f && f == f ==> f == f
 
 -- Arg properties
 
@@ -253,3 +270,57 @@ propFactsInLabels facts =
       allFacts = fdFacts factDB
       factLabelsMap = fdFactLabels factDB
    in all (\entry -> Map.member (LFact (feLabel entry)) factLabelsMap) allFacts
+
+-- Number Theory property tests
+
+propDivisorsCorrect :: Positive Int -> Bool
+propDivisorsCorrect (Positive n) =
+  all (\d -> n `mod` d == 0) (divisors n)
+
+propDivisorsMemoCorrect :: Positive Int -> Bool
+propDivisorsMemoCorrect (Positive n) =
+  divisorsMemo n == divisors n
+
+propPrimeFactorsArePrime :: Positive Int -> Bool
+propPrimeFactorsArePrime (Positive n) =
+  all isPrime (primeFactors n)
+
+propPrimeFactorizationCorrect :: Positive Int -> Bool
+propPrimeFactorizationCorrect (Positive n)
+  | n <= 1 = null (primeFactorization n)
+  | otherwise = product [p ^ k | (p, k) <- primeFactorization n] == n
+
+propPrimeFactorsMemoCorrect :: Positive Int -> Bool
+propPrimeFactorsMemoCorrect (Positive n) =
+  primeFactorsMemo n == primeFactors n
+
+-- FactKey property tests
+
+propFactKeyStable :: Fact -> Bool
+propFactKeyStable f = factKey f == factKey f
+
+propEqualFactsEqualKeys :: Fact -> Bool
+propEqualFactsEqualKeys f =
+  let f2 = Fact (factName f) (factArgs f)
+   in factKey f == factKey f2
+
+-- Substitution property tests
+
+propEmptySubstIdentity :: Property
+propEmptySubstIdentity = forAll genSymOnlyFact $ \f ->
+  applySubstToFact Map.empty f == f
+
+-- Generate facts with only Sym and Num args (Exact converts to Sym)
+genSymOnlyFact :: Gen Fact
+genSymOnlyFact = do
+  name <- arbitrary
+  numArgs <- choose (0, 3)
+  args <- vectorOf numArgs genSymOrNum
+  pure $ Fact name args
+  where
+    genSymOrNum = oneof [Sym <$> arbitrary, Num <$> arbitrary]
+
+propSubstDeterministic :: Fact -> Bool
+propSubstDeterministic f =
+  let subst = Map.fromList [("X", "a"), ("Y", "b")]
+   in applySubstToFact subst f == applySubstToFact subst f

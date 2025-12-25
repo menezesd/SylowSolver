@@ -1,3 +1,14 @@
+-- | First-order unification for matching theorem premises to facts.
+--
+-- This module implements unification between template patterns (from theorem
+-- premises) and concrete facts. The key argument types are:
+--
+--   * 'Sym' \/ 'Num' \/ 'Exact': Must match structurally
+--   * 'Var': Binds to any value; repeated occurrences must bind consistently
+--   * 'Fresh': Like 'Var' but generates a new symbol when the theorem fires
+--
+-- Substitutions map variable names to their bound string values.
+--
 module Unification
   ( Substitution
   , UnificationError(..)
@@ -5,7 +16,6 @@ module Unification
   , unifyFact
   , unifyFacts
   , unifyArg
-  , applySubst
   , applySubstToFact
   , applySubstToArg
   ) where
@@ -50,6 +60,7 @@ unifyFacts _ ts fs = Left (ArityMismatch (length ts) (length fs))
 
 -- Unify a single argument with a substitution already in place
 -- Optimized to avoid argText allocations in hot paths
+{-# INLINE unifyArg #-}
 unifyArg :: Substitution -> Arg -> Arg -> Either UnificationError Substitution
 unifyArg subst tArg fArg =
   case (tArg, fArg) of
@@ -105,11 +116,13 @@ unifyArg subst tArg fArg =
                 else Left (ConflictingBinding name v fText)
 
 -- Apply substitution to a fact
+{-# INLINE applySubstToFact #-}
 applySubstToFact :: Substitution -> Fact -> Fact
 applySubstToFact subst (Fact name args) =
   Fact name (map (applySubstToArg subst) args)
 
 -- Apply substitution to an argument
+{-# INLINE applySubstToArg #-}
 applySubstToArg :: Substitution -> Arg -> Arg
 applySubstToArg subst arg =
   case arg of
@@ -126,7 +139,5 @@ applySubstToArg subst arg =
         Just symName -> Sym symName
         Nothing -> arg
     Sym _ -> arg
+    Num _ -> arg  -- Numeric arguments are not substituted
 
--- Apply substitution (wrapper for convenience)
-applySubst :: Substitution -> Fact -> Fact
-applySubst = applySubstToFact

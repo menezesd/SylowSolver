@@ -6,8 +6,6 @@ module EnvPrint
 import Core
 import Env
 import ProofTrace
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 
 printRelevantFacts :: ProofEnvironment -> [String]
 printRelevantFacts = showProofTrace . buildTrace

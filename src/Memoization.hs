@@ -1,5 +1,27 @@
 {-# LANGUAGE BangPatterns #-}
 
+-- | Thread-safe memoization for number theory functions.
+--
+-- == Safety of unsafePerformIO usage
+--
+-- This module uses 'unsafePerformIO' for global memoization caches.
+-- The usage is safe because:
+--
+--   1. __Referential transparency__: The memoized functions are pure number
+--      theory computations. The cache merely avoids recomputation; the result
+--      is identical whether the value comes from cache or is freshly computed.
+--
+--   2. __Single initialization__: Each cache 'IORef' is created at most once
+--      due to the 'NOINLINE' pragma, preventing the optimizer from duplicating
+--      the initialization.
+--
+--   3. __Thread safety__: All cache operations use 'atomicModifyIORef'' which
+--      provides atomic read-modify-write, preventing race conditions.
+--
+--   4. __No observable side effects__: From the caller's perspective, these
+--      functions behave as pure functions. The internal caching is an
+--      implementation detail that cannot affect program correctness.
+--
 module Memoization
   ( -- * Memoized number theory functions
     divisorsMemo
@@ -16,7 +38,7 @@ module Memoization
   , CacheStats(..)
   ) where
 
-import qualified Data.Map.Strict as Map
+import qualified Data.IntMap.Strict as IntMap
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)
 import NumberTheory
@@ -28,64 +50,71 @@ data CacheStats = CacheStats
   , csCacheSize :: !Int
   } deriving (Show, Eq)
 
--- Global cache for divisors
+-- Global cache for divisors (using IntMap for efficiency)
+-- SAFETY: NOINLINE ensures single initialization; see module header for full safety argument
 {-# NOINLINE divisorsCache #-}
-divisorsCache :: IORef (Map.Map Int [Int])
-divisorsCache = unsafePerformIO (newIORef Map.empty)
+divisorsCache :: IORef (IntMap.IntMap [Int])
+divisorsCache = unsafePerformIO (newIORef IntMap.empty)
 
 -- Global cache for prime factors
+-- SAFETY: See module header for unsafePerformIO safety argument
 {-# NOINLINE primeFactorsCache #-}
-primeFactorsCache :: IORef (Map.Map Int [Int])
-primeFactorsCache = unsafePerformIO (newIORef Map.empty)
+primeFactorsCache :: IORef (IntMap.IntMap [Int])
+primeFactorsCache = unsafePerformIO (newIORef IntMap.empty)
 
 -- Global cache for prime factorization
+-- SAFETY: See module header for unsafePerformIO safety argument
 {-# NOINLINE primeFactorizationCache #-}
-primeFactorizationCache :: IORef (Map.Map Int [(Int, Int)])
-primeFactorizationCache = unsafePerformIO (newIORef Map.empty)
+primeFactorizationCache :: IORef (IntMap.IntMap [(Int, Int)])
+primeFactorizationCache = unsafePerformIO (newIORef IntMap.empty)
 
 -- Global cache for isPrime
+-- SAFETY: See module header for unsafePerformIO safety argument
 {-# NOINLINE isPrimeCache #-}
-isPrimeCache :: IORef (Map.Map Int Bool)
-isPrimeCache = unsafePerformIO (newIORef Map.empty)
+isPrimeCache :: IORef (IntMap.IntMap Bool)
+isPrimeCache = unsafePerformIO (newIORef IntMap.empty)
 
 -- Global cache statistics
+-- SAFETY: See module header for unsafePerformIO safety argument
 {-# NOINLINE cacheStatsRef #-}
 cacheStatsRef :: IORef CacheStats
 cacheStatsRef = unsafePerformIO (newIORef (CacheStats 0 0 0))
 
--- Helper to memoize a function
-memoize :: (Ord a) => IORef (Map.Map a b) -> (a -> b) -> a -> b
-memoize cacheRef f x = unsafePerformIO $ do
-  cache <- readIORef cacheRef
-  case Map.lookup x cache of
-    Just result -> do
-      -- Record cache hit
-      modifyIORef' cacheStatsRef $ \s -> s { csHits = csHits s + 1 }
-      return result
-    Nothing -> do
-      -- Compute and cache result
-      let !result = f x
-      modifyIORef' cacheRef (Map.insert x result)
-      -- Record cache miss
-      modifyIORef' cacheStatsRef $ \s -> s
-        { csMisses = csMisses s + 1
-        , csCacheSize = csCacheSize s + 1
-        }
-      return result
+-- | Memoize a pure function with Int keys using thread-safe global cache.
+-- SAFETY: unsafePerformIO is safe here because:
+--   - The function 'f' is pure (deterministic, no side effects)
+--   - atomicModifyIORef' ensures thread-safe cache access
+--   - The result is the same whether cached or computed
+{-# INLINE memoizeInt #-}
+memoizeInt :: IORef (IntMap.IntMap b) -> (Int -> b) -> Int -> b
+memoizeInt cacheRef f x = unsafePerformIO $ do
+  -- Atomic lookup-or-insert: check cache, compute if missing
+  (result, isHit) <- atomicModifyIORef' cacheRef $ \cache ->
+    case IntMap.lookup x cache of
+      Just val -> (cache, (val, True))
+      Nothing ->
+        let !computed = f x
+         in (IntMap.insert x computed cache, (computed, False))
+  -- Update stats based on hit/miss
+  atomicModifyIORef' cacheStatsRef $ \s ->
+    if isHit
+      then (s { csHits = csHits s + 1 }, ())
+      else (s { csMisses = csMisses s + 1, csCacheSize = csCacheSize s + 1 }, ())
+  return result
 
 -- Memoized versions of number theory functions
 
 divisorsMemo :: Int -> [Int]
-divisorsMemo = memoize divisorsCache divisors
+divisorsMemo = memoizeInt divisorsCache divisors
 
 primeFactorsMemo :: Int -> [Int]
-primeFactorsMemo = memoize primeFactorsCache primeFactors
+primeFactorsMemo = memoizeInt primeFactorsCache primeFactors
 
 primeFactorizationMemo :: Int -> [(Int, Int)]
-primeFactorizationMemo = memoize primeFactorizationCache primeFactorization
+primeFactorizationMemo = memoizeInt primeFactorizationCache primeFactorization
 
 isPrimeMemo :: Int -> Bool
-isPrimeMemo = memoize isPrimeCache isPrime
+isPrimeMemo = memoizeInt isPrimeCache isPrime
 
 -- Derived memoized functions that use the cached primitives
 
@@ -108,8 +137,8 @@ getCacheStats = readIORef cacheStatsRef
 
 resetCacheStats :: IO ()
 resetCacheStats = do
-  writeIORef divisorsCache Map.empty
-  writeIORef primeFactorsCache Map.empty
-  writeIORef primeFactorizationCache Map.empty
-  writeIORef isPrimeCache Map.empty
+  writeIORef divisorsCache IntMap.empty
+  writeIORef primeFactorsCache IntMap.empty
+  writeIORef primeFactorizationCache IntMap.empty
+  writeIORef isPrimeCache IntMap.empty
   writeIORef cacheStatsRef (CacheStats 0 0 0)

@@ -8,9 +8,9 @@ module Theorems.Counting
   ) where
 
 import Core
-import NumberTheory
+import Data.Maybe (fromMaybe)
 import Predicates
-import Theorems.Common (arg2, arg3)
+import Theorems.Common (arg2, arg3, guardList, hyper, stdThm, withArg3Num)
 
 ruleCountOrderPkElements :: [Fact] -> [Conclusion]
 ruleCountOrderPkElements [factSylow, factNum, factOrder] =
@@ -29,16 +29,12 @@ ruleCountOrderPkElements [factSylow, factNum, factOrder] =
 ruleCountOrderPkElements _ = []
 
 countOrderPkElements :: Thm
-countOrderPkElements =
-  Hyper
-    ( HyperTheorem
-        "count_order_pk_elements"
-        [ sylowPSubgroup (var "P") (var "p") (var "G")
-        , numSylowFact (var "p") (var "G") (var "n_p")
-        , order (var "P") (var "pk")
-        ]
-        ruleCountOrderPkElements
-    )
+countOrderPkElements = hyper "count_order_pk_elements"
+  [ sylowPSubgroup (var "P") (var "p") (var "G")
+  , numSylowFact (var "p") (var "G") (var "n_p")
+  , order (var "P") (var "pk")
+  ]
+  ruleCountOrderPkElements
 
 ruleCountingContradiction :: [Fact] -> [Conclusion]
 ruleCountingContradiction [fact1, fact2, factOrder] =
@@ -56,38 +52,25 @@ ruleCountingContradiction [fact1, fact2, factOrder] =
 ruleCountingContradiction _ = []
 
 countingContradiction :: Thm
-countingContradiction =
-  Hyper
-    ( HyperTheorem
-        "counting_contradiction"
-        [ orderPkLowerBound (var "G") (var "p1") (var "N1")
-        , orderPkLowerBound (var "G") (var "p2") (var "N2")
-        , order (var "G") (var "n")
-        ]
-        ruleCountingContradiction
-    )
+countingContradiction = hyper "counting_contradiction"
+  [ orderPkLowerBound (var "G") (var "p1") (var "N1")
+  , orderPkLowerBound (var "G") (var "p2") (var "N2")
+  , order (var "G") (var "n")
+  ]
+  ruleCountingContradiction
 
 ruleMultipleSylows :: [Fact] -> [Conclusion]
-ruleMultipleSylows [factNum] =
-  case arg3 factNum of
-    Just (pArg, gArg, nPArg) ->
-      case nPArg of
-        Num nP ->
-          let p = argText pArg
-              g = argText gArg
-           in if nP > 1 then [CFact (moreThanOneSylow (sym p) (sym g))] else []
-        _ -> [] -- Not a Num arg
-    _ -> []
+ruleMultipleSylows [factNum] = fromMaybe [] $ do
+  (pArg, gArg, nP) <- withArg3Num factNum (,,)
+  let p = argText pArg
+      g = argText gArg
+  pure $ guardList (nP > 1) (CFact (moreThanOneSylow (sym p) (sym g)))
 ruleMultipleSylows _ = []
 
 multipleSylows :: Thm
-multipleSylows =
-  Hyper
-    ( HyperTheorem
-        "multiple_sylows"
-        [numSylowFact (var "p") (var "G") (var "n_p")]
-        ruleMultipleSylows
-    )
+multipleSylows = hyper "multiple_sylows"
+  [numSylowFact (var "p") (var "G") (var "n_p")]
+  ruleMultipleSylows
 
 rulePossibleMaxIntersections :: [Fact] -> [Conclusion]
 rulePossibleMaxIntersections [factMore, factOrder] =
@@ -106,26 +89,18 @@ rulePossibleMaxIntersections [factMore, factOrder] =
 rulePossibleMaxIntersections _ = []
 
 possibleMaxIntersections :: Thm
-possibleMaxIntersections =
-  Hyper
-    ( HyperTheorem
-        "possible_max_intersections"
-        [moreThanOneSylow (var "p") (var "G"), sylowPOrder (var "G") (var "p") (var "pk")]
-        rulePossibleMaxIntersections
-    )
+possibleMaxIntersections = hyper "possible_max_intersections"
+  [moreThanOneSylow (var "p") (var "G"), sylowPOrder (var "G") (var "p") (var "pk")]
+  rulePossibleMaxIntersections
 
 intersectionOfSylows :: Thm
-intersectionOfSylows =
-  Std
-    ( Theorem
-        "intersection_of_sylows"
-        [maxSylowIntersection (var "G") (var "p") (var "p^k")]
-        [ sylowPSubgroup (fresh "P") (var "p") (var "G")
-        , sylowPSubgroup (fresh "Q") (var "p") (var "G")
-        , intersection (fresh "P") (fresh "Q") (fresh "R")
-        , order (fresh "R") (var "p^k")
-        ]
-    )
+intersectionOfSylows = stdThm "intersection_of_sylows"
+  [maxSylowIntersection (var "G") (var "p") (var "p^k")]
+  [ sylowPSubgroup (fresh "P") (var "p") (var "G")
+  , sylowPSubgroup (fresh "Q") (var "p") (var "G")
+  , intersection (fresh "P") (fresh "Q") (fresh "R")
+  , order (fresh "R") (var "p^k")
+  ]
 
 ruleRuleOutMaxIntersections :: [Fact] -> [Conclusion]
 ruleRuleOutMaxIntersections [factNum, factMax, factOrder] =
@@ -140,13 +115,9 @@ ruleRuleOutMaxIntersections [factNum, factMax, factOrder] =
 ruleRuleOutMaxIntersections _ = []
 
 ruleOutMaxIntersections :: Thm
-ruleOutMaxIntersections =
-  Hyper
-    ( HyperTheorem
-        "rule_out_max_intersections"
-        [ numSylowFact (var "p") (var "G") (var "np")
-        , maxSylowIntersection (var "G") (var "p") (var "p^l")
-        , sylowPOrder (var "G") (var "p") (var "p^k")
-        ]
-        ruleRuleOutMaxIntersections
-    )
+ruleOutMaxIntersections = hyper "rule_out_max_intersections"
+  [ numSylowFact (var "p") (var "G") (var "np")
+  , maxSylowIntersection (var "G") (var "p") (var "p^l")
+  , sylowPOrder (var "G") (var "p") (var "p^k")
+  ]
+  ruleRuleOutMaxIntersections

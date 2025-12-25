@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module NumberTheory
   ( isPrime
   , primesUpTo
@@ -12,13 +14,14 @@ module NumberTheory
 
 import Data.List (sort)
 
+{-# INLINE isqrt #-}
 isqrt :: Int -> Int
 isqrt n = go n
   where
-    go x
+    go !x
       | x <= 0 = 0
       | otherwise =
-          let y = (x + n `div` x) `div` 2
+          let !y = (x + n `div` x) `div` 2
            in if y >= x then x else go y
 
 isPrime :: Int -> Bool
@@ -28,8 +31,8 @@ isPrime n
   | even n = False
   | otherwise = go 3
   where
-    r = isqrt n
-    go i
+    !r = isqrt n
+    go !i
       | i > r = True
       | n `mod` i == 0 = False
       | otherwise = go (i + 2)
@@ -49,8 +52,8 @@ divisors n
   | n <= 0 = []
   | otherwise = sort (concatMap pair [1 .. r])
   where
-    r = isqrt n
-    pair i
+    !r = isqrt n
+    pair !i
       | n `mod` i /= 0 = []
       | i * i == n = [i]
       | otherwise = [i, n `div` i]
@@ -58,7 +61,7 @@ divisors n
 maxPDivisor :: Int -> Int -> Int
 maxPDivisor n p = go n 0
   where
-    go m k
+    go !m !k
       | m `mod` p /= 0 = k
       | otherwise = go (m `div` p) (k + 1)
 
@@ -67,16 +70,16 @@ primeFactors n
   | n <= 1 = []
   | otherwise = go n 2 []
   where
-    go m p acc
+    go !m !p !acc
       | m == 1 = reverse acc
       | p * p > m = reverse (m : acc)
       | m `mod` p == 0 = go (dropFactor m p) (next p) (p : acc)
       | otherwise = go m (next p) acc
-    dropFactor m p
-      | m `mod` p == 0 = dropFactor (m `div` p) p
+    dropFactor !m !p'
+      | m `mod` p' == 0 = dropFactor (m `div` p') p'
       | otherwise = m
     next 2 = 3
-    next x = x + 2
+    next !x = x + 2
 
 primeFactorization :: Int -> [(Int, Int)]
 primeFactorization n =

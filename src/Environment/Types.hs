@@ -1,3 +1,6 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE StrictData #-}
+
 module Environment.Types
   ( FactDatabase(..)
   , GoalState(..)
@@ -11,11 +14,12 @@ module Environment.Types
   , Provenance(..)
   , DisjunctionKey(..)
   , TriggerIndex
+  -- Helper functions
+  , mkProvenance
   -- Backward compatibility accessors
   , feDependencies
   , feDisAncestors
   , feConcThm
-  , deDependencies
   , deDisAncestors
   , deConcThm
   ) where
@@ -33,7 +37,7 @@ data Provenance = Provenance
   { provDeps :: [Label]
   , provDisAncestors :: Set (DisjId, Int)
   , provThm :: Maybe String
-  } deriving (Eq, Show)
+  } deriving stock (Eq, Show)
 
 -- Entries that track facts and disjunctions with metadata
 data FactEntry = FactEntry
@@ -42,7 +46,7 @@ data FactEntry = FactEntry
   , feProv :: Provenance
   , feUseful :: Bool
   , feDepth :: Int
-  } deriving (Eq, Show)
+  } deriving stock (Eq, Show)
 
 -- Backward compatibility accessors
 feDependencies :: FactEntry -> [Label]
@@ -59,12 +63,9 @@ data DisjunctionEntry = DisjunctionEntry
   , deLabel :: DisjId
   , deProv :: Provenance
   , deUseful :: Bool
-  } deriving (Eq, Show)
+  } deriving stock (Eq, Show)
 
 -- Backward compatibility accessors
-deDependencies :: DisjunctionEntry -> [Label]
-deDependencies = provDeps . deProv
-
 deDisAncestors :: DisjunctionEntry -> Set (DisjId, Int)
 deDisAncestors = provDisAncestors . deProv
 
@@ -74,7 +75,7 @@ deConcThm = provThm . deProv
 data Labeled
   = LFactEntry FactEntry
   | LDisjEntry DisjunctionEntry
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- Structural key for disjunction deduplication
 -- Avoids string concatenation overhead
@@ -82,7 +83,7 @@ data DisjunctionKey = DisjunctionKey
   { dkFacts :: [(String, [Arg])]  -- Sorted facts by (name, args)
   , dkThm :: Maybe String
   , dkAncestors :: [(DisjId, Int)]  -- Sorted ancestors
-  } deriving (Eq, Ord, Show)
+  } deriving stock (Eq, Ord, Show)
 
 -- Database of all facts and disjunctions
 data FactDatabase = FactDatabase
@@ -92,14 +93,14 @@ data FactDatabase = FactDatabase
   , fdFactIndex :: Map FactKey [FactEntry]
   , fdDisjunctions :: [DisjunctionEntry]
   , fdDisjLabels :: Map DisjunctionKey DisjId
-  } deriving (Show)
+  } deriving stock (Show)
 
 -- Goal tracking state
 data GoalState = GoalState
   { gsGoal :: Fact
   , gsAchieved :: Bool
   , gsDisCombos :: [Set (DisjId, Int)]
-  } deriving (Show)
+  } deriving stock (Show)
 
 -- Generator state for IDs and symbols
 data GeneratorState = GeneratorState
@@ -108,7 +109,7 @@ data GeneratorState = GeneratorState
   , gsCurLetter :: Char
   , gsCurSuffix :: Int
   , gsSymbolSet :: Set String
-  } deriving (Show)
+  } deriving stock (Show)
 
 -- Case analysis state
 data CaseState = CaseState
@@ -117,7 +118,7 @@ data CaseState = CaseState
   , csSolvedCases :: Int
   , csCaseDis :: Maybe DisjunctionEntry
   , csCaseFact :: Maybe FactEntry
-  } deriving (Show)
+  } deriving stock (Show)
 
 -- Main proof environment with organized sub-structures
 data ProofEnvironment = ProofEnvironment
@@ -138,4 +139,12 @@ data NewConclusion = NewConclusion
   , ncDependencies :: [Label]
   , ncDisAncestors :: Set (DisjId, Int)
   , ncConcThm :: Maybe String
+  }
+
+-- | Create a Provenance from a NewConclusion
+mkProvenance :: NewConclusion -> Provenance
+mkProvenance nc = Provenance
+  { provDeps = ncDependencies nc
+  , provDisAncestors = ncDisAncestors nc
+  , provThm = ncConcThm nc
   }

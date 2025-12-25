@@ -1,132 +1,76 @@
+cabal-version:  2.4
 name:           sylow-solver
 version:        0.1.0.0
 build-type:     Simple
-cabal-version:  >=1.10
+
+common common-deps
+  build-depends:       base >=4.14 && <5
+                     , containers
+                     , hashable
+                     , mtl
+                     , microlens
+                     , microlens-mtl
+                     , microlens-th
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+                       -Wextra
+                       -Wno-unused-do-bind
+                       -Wincomplete-record-updates
+                       -Wincomplete-uni-patterns
+                       -O2
+
+library
+  import:              common-deps
+  hs-source-dirs:      src
+  exposed-modules:     ArgUtils
+                     , Auto
+                     , Core
+                     , Env
+                     , Environment.Accessors
+                     , Environment.Facts
+                     , Environment.FactsMonadic
+                     , Environment.Goals
+                     , Environment.Labels
+                     , Environment.Lenses
+                     , Environment.Symbols
+                     , Environment.Types
+                     , Environment.Variables
+                     , EnvPrint
+                     , IncrementalMatching
+                     , Memoization
+                     , NumberTheory
+                     , Predicates
+                     , ProofMonad
+                     , ProofTrace
+                     , Theorems
+                     , Theorems.Common
+                     , Theorems.Counting
+                     , Theorems.Normalizer
+                     , Theorems.Sylow
+                     , Unification
 
 executable sylow-solver
+  import:              common-deps
   main-is:             Main.hs
-  hs-source-dirs:      app, src
-  other-modules:       ArgUtils
-                     , Auto
-                     , ConclusionDSL
-                     , Core
-                     , DomainTypes
-                     , Env
-                     , Environment.Accessors
-                     , Environment.Facts
-                     , Environment.FactsMonadic
-                     , Environment.Goals
-                     , Environment.Labels
-                     , Environment.Lenses
-                     , Environment.Symbols
-                     , Environment.Types
-                     , Environment.Variables
-                     , EnvPrint
-                     , IncrementalMatching
-                     , Memoization
-                     , NumberTheory
-                     , Predicates
-                     , ProofMonad
-                     , ProofTrace
-                     , Theorems
-                     , Theorems.Common
-                     , Theorems.Counting
-                     , Theorems.Normalizer
-                     , Theorems.Sylow
-                     , Unification
-  default-language:    Haskell2010
-  build-depends:       base >=4.14 && <5
-                     , containers
-                     , hashable
-                     , mtl
-                     , microlens
-                     , microlens-mtl
-                     , microlens-th
+  hs-source-dirs:      app
+  build-depends:       sylow-solver
 
 test-suite sylow-solver-tests
+  import:              common-deps
   type:                exitcode-stdio-1.0
   main-is:             Tests.hs
-  hs-source-dirs:      test, src
-  other-modules:       ArgUtils
-                     , Auto
-                     , ConclusionDSL
-                     , Core
-                     , DomainTypes
-                     , Env
-                     , Environment.Accessors
-                     , Environment.Facts
-                     , Environment.FactsMonadic
-                     , Environment.Goals
-                     , Environment.Labels
-                     , Environment.Lenses
-                     , Environment.Symbols
-                     , Environment.Types
-                     , Environment.Variables
-                     , EnvPrint
-                     , Generators
-                     , IncrementalMatching
-                     , Memoization
-                     , NumberTheory
-                     , Predicates
-                     , ProofMonad
-                     , ProofTrace
-                     , Theorems
-                     , Theorems.Common
-                     , Theorems.Counting
-                     , Theorems.Normalizer
-                     , Theorems.Sylow
-                     , Unification
-  default-language:    Haskell2010
-  build-depends:       base >=4.14 && <5
-                     , containers
-                     , hashable
-                     , mtl
-                     , microlens
-                     , microlens-mtl
-                     , microlens-th
+  hs-source-dirs:      test
+  other-modules:       Generators
+  build-depends:       sylow-solver
                      , QuickCheck
                      , tasty
                      , tasty-hunit
                      , tasty-quickcheck
 
 benchmark sylow-solver-benchmarks
+  import:              common-deps
   type:                exitcode-stdio-1.0
   main-is:             Benchmarks.hs
-  hs-source-dirs:      bench, src
-  other-modules:       ArgUtils
-                     , Auto
-                     , ConclusionDSL
-                     , Core
-                     , DomainTypes
-                     , Env
-                     , Environment.Accessors
-                     , Environment.Facts
-                     , Environment.FactsMonadic
-                     , Environment.Goals
-                     , Environment.Labels
-                     , Environment.Lenses
-                     , Environment.Symbols
-                     , Environment.Types
-                     , Environment.Variables
-                     , EnvPrint
-                     , IncrementalMatching
-                     , Memoization
-                     , NumberTheory
-                     , Predicates
-                     , ProofMonad
-                     , ProofTrace
-                     , Theorems
-                     , Theorems.Common
-                     , Theorems.Counting
-                     , Theorems.Normalizer
-                     , Theorems.Sylow
-                     , Unification
-  default-language:    Haskell2010
-  build-depends:       base >=4.14 && <5
-                     , containers
-                     , hashable
-                     , mtl
-                     , microlens
-                     , microlens-mtl
-                     , microlens-th
+  hs-source-dirs:      bench
+  build-depends:       sylow-solver
                      , criterion

@@ -19,16 +19,17 @@ module ProofMonad
   , updateCaseStateM
   ) where
 
+-- Standard library
 import Control.Monad.State.Strict
-import Environment.Types
-import Environment.Accessors
-import Environment.Labels (disjunctionKey, disjLabelText)
-import Core
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.List (intercalate, sort)
+
+-- Local modules
+import Core
+import Environment.Accessors
+import Environment.Labels (disjunctionKey)
+import Environment.Symbols (nextSymbol)
+import Environment.Types
 
 -- The proof monad is a State monad over ProofEnvironment
 newtype ProofM a = ProofM { unProofM :: State ProofEnvironment a }
@@ -64,48 +65,35 @@ getsEnv = gets
 
 -- Generate a new fact label
 newLabelM :: ProofM FactId
-newLabelM = do
-  env <- get
+newLabelM = state $ \env ->
   let lbl = FactId (peCurFactNum env)
-  modifyEnv (updateGenState (\gs -> gs { gsCurFactNum = gsCurFactNum gs + 1 }))
-  return lbl
+      env' = updateGenState (\gs -> gs { gsCurFactNum = gsCurFactNum gs + 1 }) env
+   in (lbl, env')
 
 -- Generate a new disjunction label (or reuse existing)
 newDisjLabelM :: DisjunctionEntry -> ProofM DisjId
-newDisjLabelM disj = do
-  env <- get
+newDisjLabelM disj = state $ \env ->
   let key = disjunctionKey disj
-  case Map.lookup key (peDisjLabels env) of
-    Just existingId -> return existingId
-    Nothing -> do
-      let newId = DisjId (peCurDisjNum env)
-      modifyEnv (updateGenState (\gs -> gs { gsCurDisjNum = gsCurDisjNum gs + 1 }))
-      modifyEnv (updateFactDB (\db -> db { fdDisjLabels = Map.insert key newId (fdDisjLabels db) }))
-      return newId
+   in case Map.lookup key (peDisjLabels env) of
+        Just existingId -> (existingId, env)
+        Nothing ->
+          let newId = DisjId (peCurDisjNum env)
+              env' = updateGenState (\gs -> gs { gsCurDisjNum = gsCurDisjNum gs + 1 })
+                   . updateFactDB (\db -> db { fdDisjLabels = Map.insert key newId (fdDisjLabels db) })
+                   $ env
+           in (newId, env')
 
 -- Generate a new unique symbol
 generateSymbolM :: ProofM String
-generateSymbolM = do
-  env <- get
-  let (env', sym) = go (peCurLetter env) (peCurSuffix env) env
-  put env'
-  return sym
-  where
-    go curLetter curSuffix env =
-      let suffix = if curSuffix == 0 then "" else show curSuffix
-          sym = curLetter : suffix
-          nextLetter = if curLetter == 'Z' then 'A' else succ curLetter
-          nextSuffix = if curLetter == 'Z' then curSuffix + 1 else curSuffix
-       in if Set.member sym (peSymbolSet env)
-            then go nextLetter nextSuffix env
-            else
-              ( updateGenState (\gs -> gs
-                  { gsCurLetter = nextLetter
-                  , gsCurSuffix = nextSuffix
-                  , gsSymbolSet = Set.insert sym (gsSymbolSet gs)
-                  }) env
-              , sym
-              )
+generateSymbolM = state $ \env ->
+  let (newSym, nextLetter', nextSuffix') =
+        nextSymbol (peCurLetter env) (peCurSuffix env) (peSymbolSet env)
+      env' = updateGenState (\gs -> gs
+        { gsCurLetter = nextLetter'
+        , gsCurSuffix = nextSuffix'
+        , gsSymbolSet = Set.insert newSym (gsSymbolSet gs)
+        }) env
+   in (newSym, env')
 
 -- Update sub-structures in a monadic style
 updateFactDBM :: (FactDatabase -> FactDatabase) -> ProofM ()

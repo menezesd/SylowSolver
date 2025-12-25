@@ -14,7 +14,6 @@ module Env
   , feDependencies
   , feDisAncestors
   , feConcThm
-  , deDependencies
   , deDisAncestors
   , deConcThm
   -- Main functions
@@ -29,18 +28,19 @@ module Env
   , module Environment.Variables
   ) where
 
+-- Standard library
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+
+-- Local modules
 import Core
-import Environment.Types
 import Environment.Accessors
 import Environment.Facts
 import Environment.Goals
 import Environment.Labels
 import Environment.Symbols
+import Environment.Types
 import Environment.Variables
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
 
 -- Build trigger index for incremental theorem matching
 buildTriggerIndex :: [Thm] -> TriggerIndex
@@ -53,7 +53,7 @@ buildTriggerIndex thms =
    in Map.fromListWith (++) [(k, [t]) | (k, t) <- triggers]
 
 -- Initialize proof environment with initial facts, theorems, and goal
-initEnv :: [Fact] -> [Thm] -> Map String Thm -> Fact -> ProofEnvironment
+initEnv :: [Fact] -> [Thm] -> Map.Map String Thm -> Fact -> ProofEnvironment
 initEnv facts theorems thmDict goal =
   let baseFactDB = FactDatabase
         { fdFacts = []

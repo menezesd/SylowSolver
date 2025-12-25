@@ -1,48 +1,47 @@
 module Environment.Goals
   ( updateGoalAchieved
   , updateUseful
-  , factEquals
   ) where
 
 import Core
 import Environment.Types
 import Environment.Accessors
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 
--- Check if two facts are equal (same name and args)
-factEquals :: Fact -> Fact -> Bool
-factEquals a b = factName a == factName b && factArgs a == factArgs b
-
--- Update goal achieved status based on disjunction coverage
+-- | Update goal achieved status based on disjunction coverage.
+-- The goal is achieved when all possible combinations of disjunction
+-- branches have been proven (case analysis complete).
 updateGoalAchieved :: ProofEnvironment -> ProofEnvironment
-updateGoalAchieved env =
-  if null (peGoalDisCombos env)
-    then env
-    else
-      let fullDisSet = Set.unions (peGoalDisCombos env)
-          disLabels = Set.toList (Set.map fst fullDisSet)
-          disSizes =
-            [ (d, length facts)
-            | d <- disLabels
-            , Just (LDisjEntry disj) <- [Map.lookup (LDisj d) (peFactLabels env)]
-            , let facts = deFacts disj
-            ]
-          cartesian [] = [[]]
-          cartesian (xs : xss) = [x : ys | x <- xs, ys <- cartesian xss]
-          domain =
-            [ [ (d, i) | i <- [0 .. l - 1] ]
-            | (d, l) <- disSizes
-            ]
-          fullCombos = map Set.fromList (cartesian domain)
-          observed = peGoalDisCombos env
-          covered s = any (`Set.isSubsetOf` s) observed
-          allCovered = all covered fullCombos
-       in if allCovered
-          then updateGoalState (\gs -> gs { gsAchieved = True }) env
-          else env
+updateGoalAchieved env
+  | null observed = env
+  | allCombinationsCovered = updateGoalState (\gs -> gs { gsAchieved = True }) env
+  | otherwise = env
+  where
+    observed = peGoalDisCombos env
+
+    -- Get all disjunction IDs referenced in proofs
+    allDisjIds = Set.toList $ Set.map fst $ Set.unions observed
+
+    -- Look up disjunction size from environment
+    disjSize :: DisjId -> Int
+    disjSize d = case Map.lookup (LDisj d) (peFactLabels env) of
+      Just (LDisjEntry disj) -> length (deFacts disj)
+      _ -> 0
+
+    -- Generate all branch indices for each disjunction
+    branchChoices :: [[(DisjId, Int)]]
+    branchChoices = [ [(d, i) | i <- [0 .. disjSize d - 1]] | d <- allDisjIds ]
+
+    -- All possible combinations of branch choices (Cartesian product)
+    allCombinations :: [Set.Set (DisjId, Int)]
+    allCombinations = map Set.fromList (sequence branchChoices)
+
+    -- A combination is covered if some observed proof covers it
+    isCovered :: Set.Set (DisjId, Int) -> Bool
+    isCovered combo = any (`Set.isSubsetOf` combo) observed
+
+    allCombinationsCovered = all isCovered allCombinations
 
 -- Mark a fact and its dependencies as useful
 updateUseful :: Label -> ProofEnvironment -> ProofEnvironment

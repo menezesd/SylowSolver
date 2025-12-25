@@ -9,13 +9,11 @@ import Control.Monad (when)
 import Core
 import Environment.Types
 import Environment.Accessors
-import Environment.Goals
+import Environment.Goals (updateGoalAchieved, updateUseful)
 import Environment.Variables
 import ProofMonad
 import Unification
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 
 -- Add a single fact in monadic style
@@ -29,11 +27,7 @@ addFactM nc f = do
 
   -- Create entry
   caseDepth <- getsEnv peCaseDepth
-  let prov = Provenance
-        { provDeps = ncDependencies nc
-        , provDisAncestors = ncDisAncestors nc
-        , provThm = ncConcThm nc
-        }
+  let prov = mkProvenance nc
       entry = FactEntry
         { feFact = f
         , feLabel = lbl
@@ -52,7 +46,7 @@ addFactM nc f = do
 
   -- Check if this fact achieves the goal
   goal <- getsEnv peGoal
-  when (factEquals f goal) $ do
+  when (f == goal) $ do
     updateGoalStateM $ \gs -> gs { gsDisCombos = ncDisAncestors nc : gsDisCombos gs }
     modifyEnv (updateUseful (LFact lbl))
     modifyEnv updateGoalAchieved
@@ -63,11 +57,7 @@ addFactM nc f = do
 addDisjunctionM :: NewConclusion -> [Fact] -> ProofM [FactEntry]
 addDisjunctionM nc fs = do
   -- Create disjunction entry
-  let prov = Provenance
-        { provDeps = ncDependencies nc
-        , provDisAncestors = ncDisAncestors nc
-        , provThm = ncConcThm nc
-        }
+  let prov = mkProvenance nc
       disj = DisjunctionEntry
         { deFacts = fs
         , deLabel = DisjId 0  -- Placeholder

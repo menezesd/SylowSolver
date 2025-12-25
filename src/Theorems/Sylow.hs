@@ -13,12 +13,11 @@ module Theorems.Sylow
   ) where
 
 import Core
-import ConclusionDSL
 import Data.List (foldl')
 import NumberTheory (maxPDivisor)
 import Memoization (numSylowMemo, primeFactorsMemo)
 import Predicates
-import Theorems.Common (arg2, arg3)
+import Theorems.Common (arg2, arg3, hyper, stdThm, withNum2, fromMaybeList)
 
 ruleSylow :: [Fact] -> [Conclusion]
 ruleSylow [factGroup, factOrder] =
@@ -39,22 +38,18 @@ ruleSylow [factGroup, factOrder] =
                       [ numSylowFact (num p) (sym groupName) (num n)
                       | n <- nps
                       ]
-                 in if length disFacts == 1
-                      then base ++ facts disFacts
-                      else base ++ [disj disFacts]
+                 in case disFacts of
+                      [single] -> base ++ [CFact single]
+                      _ -> base ++ [disj disFacts]
            in concatMap buildForP (primeFactorsMemo groupOrder)
         _ -> [] -- Not a Num arg
     _ -> []
 ruleSylow _ = []
 
 sylowTheorem :: Thm
-sylowTheorem =
-  Hyper
-    ( HyperTheorem
-        "sylow"
-        [group (var "G"), order (var "G") (var "n")]
-        ruleSylow
-    )
+sylowTheorem = hyper "sylow"
+  [group (var "G"), order (var "G") (var "n")]
+  ruleSylow
 
 ruleSingleSylowNotSimple :: [Fact] -> [Conclusion]
 ruleSingleSylowNotSimple [factSylow, _factNum, factOrder] =
@@ -76,21 +71,17 @@ ruleSingleSylowNotSimple [factSylow, _factNum, factOrder] =
 ruleSingleSylowNotSimple _ = []
 
 singleSylowNotSimple :: Thm
-singleSylowNotSimple =
-  Hyper
-    ( HyperTheorem
-        "single_sylow_normal"
-        [ sylowPSubgroup (var "H") (var "p") (var "G")
-        , numSylowFact (var "p") (var "G") (exact "1")
-        , order (var "G") (var "n")
-        ]
-        ruleSingleSylowNotSimple
-    )
+singleSylowNotSimple = hyper "single_sylow_normal"
+  [ sylowPSubgroup (var "H") (var "p") (var "G")
+  , numSylowFact (var "p") (var "G") (exact "1")
+  , order (var "G") (var "n")
+  ]
+  ruleSingleSylowNotSimple
 
 simpleNotSimple :: Thm
-simpleNotSimple =
-  Std
-    (Theorem "not_simple" [simple (var "G"), notSimple (var "G")] [falseFact])
+simpleNotSimple = stdThm "not_simple"
+  [simple (var "G"), notSimple (var "G")]
+  [falseFact]
 
 ruleEmbedInAn :: [Fact] -> [Conclusion]
 ruleEmbedInAn [factNum, _factSimple] =
@@ -110,89 +101,54 @@ ruleEmbedInAn [factNum, _factSimple] =
 ruleEmbedInAn _ = []
 
 embedInAn :: Thm
-embedInAn =
-  Hyper
-    ( HyperTheorem
-        "embed_An"
-        [numSylowFact (var "p") (var "G") (var "n_p"), simple (var "G")]
-        ruleEmbedInAn
-    )
+embedInAn = hyper "embed_An"
+  [numSylowFact (var "p") (var "G") (var "n_p"), simple (var "G")]
+  ruleEmbedInAn
 
 ruleAlternatingOrder :: [Fact] -> [Conclusion]
 ruleAlternatingOrder [factAlt] =
-  case arg2 factAlt of
-    Just (aArg, nArg) ->
-      case nArg of
-        Num n ->
-          let a = argText aArg
-              factorial' :: Integer -> Integer
-              factorial' m = foldl' (*) 1 [1 .. m]
-              orderVal
-                | n == 1 = 1
-                | otherwise = factorial' (fromIntegral n) `div` 2
-           in [CFact (order (sym a) (num (fromInteger orderVal)))]
-        _ -> [] -- Not a Num arg
-    _ -> []
+  fromMaybeList $ withNum2 factAlt $ \aArg n ->
+    let a = argText aArg
+        factorial' :: Integer -> Integer
+        factorial' m = foldl' (*) 1 [1 .. m]
+        orderVal
+          | n == 1 = 1
+          | otherwise = factorial' (fromIntegral n) `div` 2
+     in [CFact (order (sym a) (num (fromInteger orderVal)))]
 ruleAlternatingOrder _ = []
 
 alternatingOrder :: Thm
-alternatingOrder =
-  Hyper
-    ( HyperTheorem
-        "alternating_order"
-        [alternatingGroup (var "A") (var "n")]
-        ruleAlternatingOrder
-    )
+alternatingOrder = hyper "alternating_order"
+  [alternatingGroup (var "A") (var "n")]
+  ruleAlternatingOrder
 
 lagrange :: Thm
-lagrange =
-  Std
-    ( Theorem
-        "lagrange"
-        [subgroup (var "H") (var "G"), order (var "H") (var "n"), order (var "G") (var "m")]
-        [divides (var "n") (var "m")]
-    )
+lagrange = stdThm "lagrange"
+  [subgroup (var "H") (var "G"), order (var "H") (var "n"), order (var "G") (var "m")]
+  [divides (var "n") (var "m")]
 
 ruleDividesContradiction :: [Fact] -> [Conclusion]
 ruleDividesContradiction [factDiv] =
-  case arg2 factDiv of
-    Just (mArg, nArg) ->
-      case (mArg, nArg) of
-        (Num m, Num n) ->
-          if n `mod` m /= 0 then [CFact falseFact] else []
-        _ -> [] -- Not Num args
+  case factArgs factDiv of
+    [Num m, Num n] | n `mod` m /= 0 -> [CFact falseFact]
     _ -> []
 ruleDividesContradiction _ = []
 
 dividesContradiction :: Thm
-dividesContradiction =
-  Hyper
-    ( HyperTheorem
-        "divides_contradiction"
-        [divides (var "m") (var "n")]
-        ruleDividesContradiction
-    )
+dividesContradiction = hyper "divides_contradiction"
+  [divides (var "m") (var "n")]
+  ruleDividesContradiction
 
 ruleAlternatingSimple :: [Fact] -> [Conclusion]
 ruleAlternatingSimple [factAlt] =
-  case arg2 factAlt of
-    Just (aArg, nArg) ->
-      case nArg of
-        Num n ->
-          let a = argText aArg
-           in if n >= 5 then [CFact (simple (sym a))] else []
-        _ -> [] -- Not a Num arg
-    _ -> []
+  fromMaybeList $ withNum2 factAlt $ \aArg n ->
+    if n >= 5 then [CFact (simple (sym (argText aArg)))] else []
 ruleAlternatingSimple _ = []
 
 alternatingSimple :: Thm
-alternatingSimple =
-  Hyper
-    ( HyperTheorem
-        "alternating_simple"
-        [alternatingGroup (var "A") (var "n")]
-        ruleAlternatingSimple
-    )
+alternatingSimple = hyper "alternating_simple"
+  [alternatingGroup (var "A") (var "n")]
+  ruleAlternatingSimple
 
 ruleSubgroupIndex :: [Fact] -> [Conclusion]
 ruleSubgroupIndex [factSub, factH, factG] =
@@ -210,18 +166,14 @@ ruleSubgroupIndex [factSub, factH, factG] =
 ruleSubgroupIndex _ = []
 
 subgroupIndex :: Thm
-subgroupIndex =
-  Hyper
-    ( HyperTheorem
-        "subgroup_index"
-        [subgroup (var "H") (var "G"), order (var "H") (var "m"), order (var "G") (var "n")]
-        ruleSubgroupIndex
-    )
+subgroupIndex = hyper "subgroup_index"
+  [subgroup (var "H") (var "G"), order (var "H") (var "m"), order (var "G") (var "n")]
+  ruleSubgroupIndex
 
 cosetAction :: Thm
-cosetAction =
-  Std
-    (Theorem "coset_action" [index (var "G") (var "H") (var "n")] [transitiveAction (var "G") (var "n")])
+cosetAction = stdThm "coset_action"
+  [index (var "G") (var "H") (var "n")]
+  [transitiveAction (var "G") (var "n")]
 
 ruleSimpleGroupAction :: [Fact] -> [Conclusion]
 ruleSimpleGroupAction [factAction, _factSimple] =
@@ -241,10 +193,6 @@ ruleSimpleGroupAction [factAction, _factSimple] =
 ruleSimpleGroupAction _ = []
 
 simpleGroupAction :: Thm
-simpleGroupAction =
-  Hyper
-    ( HyperTheorem
-        "simple_group_action"
-        [transitiveAction (var "G") (var "n"), simple (var "G")]
-        ruleSimpleGroupAction
-    )
+simpleGroupAction = hyper "simple_group_action"
+  [transitiveAction (var "G") (var "n"), simple (var "G")]
+  ruleSimpleGroupAction

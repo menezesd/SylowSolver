@@ -1,8 +1,16 @@
+"""Automated theorem prover for Sylow theory.
+
+This module implements a complete automated proof search system using logical facts,
+theorems, and an intelligent search algorithm to prove properties of finite groups.
+"""
+from __future__ import annotations
+
 import itertools
 import math
 import sylow2
+from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Set, Tuple, Optional, Dict, Any
+from typing import List, Set, Tuple, Optional, Dict, Any, Union, Callable
 
 # Constants
 MAX_ITERATIONS = 1000
@@ -10,7 +18,33 @@ BATCH_SIZE = 8
 DEFAULT_LABEL = "F0"
 
 
-@dataclass
+class Predicates:
+    """Constants for predicate names used in facts."""
+    GROUP = "group"
+    ORDER = "order"
+    SIMPLE = "simple"
+    NOT_SIMPLE = "not_simple"
+    SUBGROUP = "subgroup"
+    NORMAL = "normal"
+    DIVIDES = "divides"
+    FALSE = "false"
+    SYLOW_ORDER = "sylow_order"
+    SYLOW_P_SUBGROUP = "sylow_p_subgroup"
+    NUM_SYLOW = "num_sylow"
+    ALTERNATING_GROUP = "alternating_group"
+    INDEX = "index"
+    TRANSITIVE_ACTION = "transitive_action"
+    ORDER_PK_LOWER_BOUND = "order_pk_lower_bound"
+    MORE_THAN_ONE_SYLOW = "more_than_one_sylow"
+    INTERSECTION = "intersection"
+    NORMALIZER = "normalizer"
+    ORDER_LOWER_BOUND = "order_lower_bound"
+    MAX_SYLOW_INTERSECTION = "max_sylow_intersection"
+    PROPER_SUBGROUP = "proper_subgroup"
+    NORMALIZER_OF_SYLOW_INTERSECTION = "normalizer_of_sylow_intersection"
+
+
+@dataclass(slots=True)
 class Fact:
     """
     Represents a logical fact in the proof system.
@@ -42,6 +76,10 @@ class Fact:
             f"{self.dependencies} :: {self.dis_ancestors}"
         )
 
+    def __repr__(self) -> str:
+        """Concise representation for debugging."""
+        return f"Fact({self.name!r}, {self.args!r})"
+
     def print_nice(self) -> None:
         """Print fact in human-readable format."""
         print(f"{self.label} : {self.name} {self.args}")
@@ -65,28 +103,18 @@ class Fact:
         """Hash based on structure for use in sets/dicts."""
         return hash((self.name, tuple(self.args)))
 
-    # Legacy compatibility
-    def do_print(self):
-        """Deprecated: use __str__ or print_nice instead."""
+    # Legacy compatibility - kept for backward compatibility with existing code
+    def do_print(self) -> None:
+        """Print fact. Consider using print(fact) instead."""
         print(self)
 
-    def do_nice_print(self):
-        """Deprecated: use print_nice instead."""
+    def do_nice_print(self) -> None:
+        """Print fact in nice format. Consider using print_nice() instead."""
         self.print_nice()
 
-    def equals(self, fact):
-        """Deprecated: use == instead."""
+    def equals(self, fact: 'Fact') -> bool:
+        """Check equality. Consider using == instead."""
         return self == fact
-
-    # returns a normal form for the fact structure
-    # useful for matching facts to theorem arguments
-    # the structure of a fact is uniquely specified by the name and number of arguments
-    # TEST THIS!!!
-
-
-#   def normal_form(self):
-
-#        return self.name + str(len(args))
 
 
 @dataclass(frozen=True)
@@ -122,40 +150,51 @@ class DisjunctionKey:
         return DisjunctionKey(sorted_facts, sorted_ancestors, thm_name)
 
 
-# an OR of facts
 class Disjunction:
+    """Represents an OR of multiple facts for case-based reasoning."""
 
-    def __init__(self, facts, dependencies=None, label=None, dis_ancestors=None, conc_thm=None):
-        dependencies = [] if dependencies is None else dependencies
-        dis_ancestors = [] if dis_ancestors is None else dis_ancestors
+    __slots__ = ('facts', 'dependencies', 'dis_ancestors', 'label', 'conc_thm', 'useful')
+
+    def __init__(
+        self,
+        facts: List[Fact],
+        dependencies: Optional[List[str]] = None,
+        label: Optional[str] = None,
+        dis_ancestors: Optional[List[Any]] = None,
+        conc_thm: Optional[Any] = None
+    ):
         self.facts = facts
-        self.dependencies = dependencies
-        self.dis_ancestors = set()
+        self.dependencies = dependencies if dependencies is not None else []
+        self.dis_ancestors: Set[Tuple[str, int]] = set()
         self.label = label
         self.conc_thm = conc_thm
-
         self.useful = False
+
+    def __repr__(self) -> str:
+        """Concise representation for debugging."""
+        fact_reprs = " OR ".join(repr(f) for f in self.facts)
+        return f"Disjunction([{fact_reprs}])"
 
     def get_key(self) -> DisjunctionKey:
         """Generate structural key for deduplication."""
         return DisjunctionKey.from_disjunction(self.facts, self.dis_ancestors, self.conc_thm)
 
-    def do_print(self):
-        facts = self.facts
+    def do_print(self) -> None:
+        """Print disjunction."""
         print(self.label, ":")
-        for i in range(0, len(facts)):
-            facts[i].do_print()
-            if i != len(facts) - 1:
+        for i, fact in enumerate(self.facts):
+            fact.do_print()
+            if i != len(self.facts) - 1:
                 print("    OR")
 
-    def do_nice_print(self):
-        facts = self.facts
+    def do_nice_print(self) -> None:
+        """Print disjunction in human-readable format."""
         print(self.label, ":")
-        for i in range(0, len(facts)):
-            facts[i].do_print()
-            if i != len(facts) - 1:
+        for i, fact in enumerate(self.facts):
+            fact.do_print()
+            if i != len(self.facts) - 1:
                 print("    OR")
-        if self.conc_thm != None:
+        if self.conc_thm is not None:
             print(
                 "    by thm ",
                 self.conc_thm.name,
@@ -164,82 +203,104 @@ class Disjunction:
             )
         else:
             print("    by hypothesis")
-        if self.dis_ancestors != set():
+        if self.dis_ancestors:
             print("    Disjunctions in history: ", *self.dis_ancestors)
         print()
 
 
-# theorem specified by:
-# list of placeholders
-# list of facts using placeholders
-# list of conclusions using placeholders
-
-# for example:
-# symbols:     G, H, I
-# facts:       subgroup H G, subgroup I H
-# conclusions: subgroup I G
-
-
 class Theorem:
+    """
+    Represents a standard logical theorem with premises and conclusions.
 
-    def __init__(self, facts, conclusions, name):
+    A theorem specifies a pattern: if facts matching the premises exist,
+    then the conclusions can be derived.
+
+    Example:
+        symbols:     G, H, I
+        facts:       subgroup H G, subgroup I H
+        conclusions: subgroup I G
+    """
+
+    __slots__ = ('facts', 'conclusions', 'name')
+
+    def __init__(self, facts: List[Fact], conclusions: List[Fact], name: str):
         self.facts = facts
         self.conclusions = conclusions
         self.name = name
 
+    def __repr__(self) -> str:
+        return f"Theorem({self.name!r})"
+
 
 class HyperTheorem:
+    """
+    Represents a computational theorem with a rule function.
 
-    # rule is a function that takes in series of facts with structure 'facts' and ouputs a list of facts
-    def __init__(self, facts, rule, name):
+    Unlike standard theorems, HyperTheorems use a Python function to compute
+    conclusions from premises, allowing for more complex reasoning.
+    """
+
+    __slots__ = ('facts', 'rule', 'name', 'multi_args')
+
+    def __init__(self, facts: List[Fact], rule: Any, name: str):
         self.facts = facts
         self.rule = rule
         self.name = name
         self.multi_args = False  # can the theorem take multiple arguments?
 
+    def __repr__(self) -> str:
+        return f"HyperTheorem({self.name!r})"
+
 
 class Proof_environment:
+    """
+    Central manager for the proof search process.
 
-    # begin with a list of facts
-    # list of facts grows as theorems are applied
-    # theorems is the set of theorems in the environment
-    # theorem_names_dict is a dictionary of theorem names
-    # goal is the fact to be proven
-    def __init__(self, facts, theorems, theorem_name_dict, goal):
+    Maintains the current state of facts, theorems, and disjunctions,
+    and provides methods for applying theorems and tracking goal achievement.
+    """
 
-        self.ordered_fact_list = []  # list of facts labels in the order that they appear
+    def __init__(
+        self,
+        facts: List[Union[Fact, 'Disjunction']],
+        theorems: List[Union[Theorem, HyperTheorem]],
+        theorem_name_dict: Dict[str, Union[Theorem, HyperTheorem]],
+        goal: Fact
+    ):
+        """
+        Initialize a proof environment.
 
-        self.facts = []
+        Args:
+            facts: Initial list of facts (hypotheses)
+            theorems: List of available theorems
+            theorem_name_dict: Dictionary mapping theorem names to theorem objects
+            goal: The fact to be proven
+        """
+        self.ordered_fact_list: List[str] = []  # fact labels in order of appearance
+        self.facts: List[Fact] = []
         self.theorems = theorems
         self.theorem_name_dict = theorem_name_dict
-        self.disjunctions = []
+        self.disjunctions: List[Disjunction] = []
 
         # Disjunction deduplication: map DisjunctionKey -> DisjId
-        self.disj_labels = {}  # For efficient lookup of existing disjunctions
+        self.disj_labels: Dict[DisjunctionKey, str] = {}
 
         self.goal = goal
-        # goal should not already be achieved (probably should check it though)
         self.goal_achieved = False
-        self.goal_dis_combos = []
-        #       self.goal_label = None
+        self.goal_dis_combos: List[Set[Tuple[str, int]]] = []
 
         # fact_labels maps labels to facts
-        # makes it easier to refer to a specific fact
-        self.fact_labels = {}
+        self.fact_labels: Dict[str, Union[Fact, Disjunction]] = {}
         self.cur_fact_num = 0
 
-        # the set of additional assumptions describing the current state of the environment
-        # a new assumption is added whenever case is called
+        # Symbol generation state - properly initialized
+        self.cur_letter = "A"
+        self.cur_suffix = 0
+
+        # The set of all symbols currently in the environment
+        self.symbol_set: Set[str] = set()
 
         self.add_new_facts(facts)
-        self.symbol_set = set()  # the set of all symbols currently in the environment
-
-        # TEST TEST
-        #       print("Second Test")
-        #        for fact in facts: #TEST
-        #            fact.do_print()
-        #            print(type(fact))
-        #            print()
 
         for fact in self.facts:
             for sym in fact.args:
@@ -250,60 +311,39 @@ class Proof_environment:
         self.cur_fact_num += 1
         return label
 
-    # has the goal been achieved yet
-    # goal_fact is a new copy of goal used for the update
-    def update_goal_achieved(self, goal_fact):
+    def update_goal_achieved(self, goal_fact: Fact) -> None:
+        """
+        Check if the goal has been achieved across all disjunction branches.
 
-        full_dis_set = set(D for D, i in set.union(*(self.goal_dis_combos)))
+        For the goal to be achieved, every possible combination of disjunction
+        branches must be covered by at least one proven path to the goal.
 
-        dis_labels = set(D for D in full_dis_set)  # prevent duplicates
-        #       print("labels")
-        #        print(dis_labels)
-        #        print("end labels")
-        #        print()
+        Args:
+            goal_fact: The fact that matches the goal (used for ancestry tracking)
+        """
+        # Collect all disjunction labels from goal ancestry
+        dis_labels = {D for D, _ in set.union(*(self.goal_dis_combos))}
 
-        #       dis_labels = set([D for D,i in goal_fact.dis_ancestors]) #prevent duplicates
-        L = [(D, len(self.fact_labels[D].facts)) for D in dis_labels]
-        #       print("L: ")
-        #        print(L)
-        #        print()
-        X = []
-        for D, l in L:
-            X.append([(D, i) for i in range(0, l)])
-        S = list(itertools.product(*X))
-        S = set(frozenset(u) for u in S)
+        # Build list of (disjunction_label, branch_count) pairs
+        disj_branch_counts = [
+            (label, len(self.fact_labels[label].facts))
+            for label in dis_labels
+        ]
 
-        #        print("S")
-        #        print(S)
-        #        print()
+        # Generate all possible branch combinations
+        branch_choices = [
+            [(label, i) for i in range(count)]
+            for label, count in disj_branch_counts
+        ]
+        all_combinations = {frozenset(combo) for combo in itertools.product(*branch_choices)}
 
-        # all we need to do is check that for each guy in S, some guy in frozen_dis_combos is a subset
-        frozen_dis_combos = set(frozenset(d) for d in self.goal_dis_combos)
-        # if frozen_dis_combos.issuperset(S): #SET UP SO NO CASTING
-        #    self.goal_achieved = True
-        for s in S:
-            found_implication = False
-            for dtuple in frozen_dis_combos:
-                if dtuple.issubset(s):
-                    found_implication = True
-                    continue
-            if not found_implication:
+        # Check that each combination is covered by some proven path
+        frozen_dis_combos = {frozenset(d) for d in self.goal_dis_combos}
+        for combination in all_combinations:
+            if not any(proven.issubset(combination) for proven in frozen_dis_combos):
                 return
 
-        # if we made it
         self.goal_achieved = True
-
-    #   def check_goal_achieved(self, goal_fact):
-    #        dis_labels = set([D for D,i in goal_disjunction_dependencies])
-    #        L = [(D,len(self.fact_labels[D].facts)) for D in dis_labels] #size of each disjunction in terms of number of facts
-    #
-    #        X = [] #list of lists of disjunction facts e.g. [ [(D1,1),(D1,2)], [(D2,1),(D2,2),(D2,3)] ]
-    #        for D, l in L:
-    #            X.append([(D,i) for i in range(0,l)])
-
-    #        S = list(itertools.product(*X))
-    #        S = set(frozenset(u) for u in S) #set of all tuples of disjunctions that need to be checked
-    #        frozen_dis_combos = set(frozenset(d) for d in self.goal_dis_combos)
 
     # mark a given fact, and all of its ancestors as useful
     def update_useful(self, fact):
@@ -313,219 +353,200 @@ class Proof_environment:
         for pred_lbl in fact.dependencies:
             self.update_useful(self.fact_labels[pred_lbl])
 
-    def add_new_facts(self, new_facts):
+    def _process_disjunction_subfacts(self, disjunction: Disjunction) -> None:
+        """Set up dependencies and ancestors for each sub-fact of a disjunction."""
+        for i, sub_fact in enumerate(disjunction.facts):
+            sub_fact.dependencies = [disjunction.label]
+            sub_fact.dis_ancestors = set(disjunction.dis_ancestors)
+            sub_fact.dis_ancestors.add((disjunction.label, i))
+
+    def add_new_facts(self, new_facts: List[Union[Fact, Disjunction]]) -> None:
+        """
+        Add new facts or disjunctions to the proof environment.
+
+        Args:
+            new_facts: List of Facts or Disjunctions to add
+        """
         for fact in new_facts:
-
             if isinstance(fact, Fact):
-
-                #               new_label = 'F'+str(self.cur_fact_num)
                 new_label = self.new_label()
                 self.fact_labels[new_label] = fact
                 fact.label = new_label
-
                 self.facts.append(fact)
-                if fact.equals(self.goal):  # we have a new instance of our goal
-                    #                   print("HERE")
+
+                if fact == self.goal:
                     self.goal_dis_combos.append(fact.dis_ancestors)
                     self.update_goal_achieved(fact)
-                    # self.goal_label = fact.label
-                    # UPDATE WIN CONDITION
-
                     self.update_useful(fact)
 
-            if isinstance(fact, Disjunction):
-                # Check if we've seen this disjunction before using structural key
+            elif isinstance(fact, Disjunction):
                 disj_key = fact.get_key()
 
                 if disj_key in self.disj_labels:
                     # Reuse existing label for duplicate disjunction
-                    existing_label = self.disj_labels[disj_key]
-                    fact.label = existing_label
-                    # Don't add duplicate to disjunctions list
-                    # Still process sub-facts in case they're needed
-                    for i in range(0, len(fact.facts)):
-                        sub_fact = fact.facts[i]
-                        sub_fact.dependencies = [fact.label]
-                        sub_fact.dis_ancestors = set(fact.dis_ancestors)
-                        sub_fact.dis_ancestors.add((fact.label, i))
-                    self.add_new_facts(fact.facts)
+                    fact.label = self.disj_labels[disj_key]
                 else:
-                    # New disjunction - add it
+                    # New disjunction
                     new_label = self.new_label(letter="D")
                     self.fact_labels[new_label] = fact
                     fact.label = new_label
                     self.disjunctions.append(fact)
-                    self.disj_labels[disj_key] = new_label  # Remember for dedup
+                    self.disj_labels[disj_key] = new_label
 
-                    for i in range(0, len(fact.facts)):
-                        sub_fact = fact.facts[i]
-                        sub_fact.dependencies = [
-                            fact.label
-                        ]  # a subfact of a disjunction depends on the disjunction
-                        sub_fact.dis_ancestors = set(fact.dis_ancestors)
-                        sub_fact.dis_ancestors.add((fact.label, i))
+                self._process_disjunction_subfacts(fact)
+                self.add_new_facts(fact.facts)
 
-                    self.add_new_facts(fact.facts)
+            self.ordered_fact_list.append(fact.label)
 
-            self.ordered_fact_list.append(new_label)  # add the new label
+    def apply_std_thm(
+        self, thm: Theorem, facts: List[Fact]
+    ) -> Union[List[Fact], bool]:
+        """
+        Apply a standard theorem to a list of facts.
 
-    #         self.cur_fact_num += 1
+        Args:
+            thm: The theorem to apply
+            facts: Facts matching the theorem's premises
 
-    def apply_std_thm(self, thm, facts):
-        valid = True
+        Returns:
+            List of conclusion facts if successful, False otherwise
+        """
         if len(facts) != len(thm.facts):
-            valid = False
-        matching = {}
-        for pair in zip(facts, thm.facts):
-            in_fact = pair[0]
-            thm_fact = pair[1]
+            return False
+
+        matching: Dict[str, Any] = {}
+        for in_fact, thm_fact in zip(facts, thm.facts):
             if in_fact.name != thm_fact.name:
-                valid = False
+                return False
             if len(in_fact.args) != len(thm_fact.args):
-                valid = False
-            for arg_pair in zip(in_fact.args, thm_fact.args):
-                in_arg = arg_pair[0]
-                thm_arg = arg_pair[1]
+                return False
 
-                # added
-                if thm_arg[0] == "*":
+            for in_arg, thm_arg in zip(in_fact.args, thm_fact.args):
+                # Check for exact match requirement (prefixed with *)
+                if isinstance(thm_arg, str) and thm_arg.startswith("*"):
                     if in_arg != thm_arg[1:]:
-                        print("exact match expected")
-                        valid = False
-                    continue  # don't bother updating the matching dict
+                        return False
+                    continue
 
+                # Check for consistent variable binding
                 if thm_arg in matching:
                     if matching[thm_arg] != in_arg:
-                        valid = False
+                        return False
                 else:
                     matching[thm_arg] = in_arg
 
-        if not valid:
-            #           print("invalid application of theorem")
-            return False
-
+        # Build conclusion facts
         conclusions = []
         for conc in thm.conclusions:
-
-            # print("---- new conc -----")
-            # conc.do_print()
-            # print("----- end new conc ----")
-
-            # new_fact_args = [ matching[x] for x in conc.args ]
-            new_fact_args = []
-            for x in conc.args:
-                if x[0] != "?":
-                    new_fact_args.append(matching[x])
-                else:
-                    new_fact_args.append(x)
-
-            new_fact = Fact(conc.name, new_fact_args)
-            conclusions.append(new_fact)
+            new_fact_args = [
+                arg if isinstance(arg, str) and arg.startswith("?") else matching[arg]
+                for arg in conc.args
+            ]
+            conclusions.append(Fact(conc.name, new_fact_args))
 
         return conclusions
 
-    # apply a theorem or hypertheorem, then add the new facts to the environment
-    # returns False if the theorem application was invalid
-    def apply_thm(self, thm, facts):
+    def apply_thm(
+        self, thm: Union[Theorem, HyperTheorem], facts: List[Fact]
+    ) -> Union[List[Union[Fact, Disjunction]], bool]:
+        """
+        Apply a theorem or hyper-theorem and add conclusions to the environment.
 
-        # check to make sure that we're never applying two facts from the same disjunction
+        Args:
+            thm: The theorem to apply
+            facts: Facts matching the theorem's premises
+
+        Returns:
+            List of new facts/disjunctions if successful, False if invalid
+        """
+        # Validate: no two facts from conflicting disjunction branches
         used_disjunction_facts = set.union(*[f.dis_ancestors for f in facts])
         used_disjunction_dict = dict(used_disjunction_facts)
-        valid = True
-        for d, i in used_disjunction_facts:
-            if used_disjunction_dict[d] != i:
-                valid = False
-        if not valid:
-            # print("Invalid use of disjunction facts")
-            return False
+        for disj_label, branch_idx in used_disjunction_facts:
+            if used_disjunction_dict[disj_label] != branch_idx:
+                return False
 
+        # Apply the appropriate theorem type
         if isinstance(thm, Theorem):
             new_facts = self.apply_std_thm(thm, facts)
-        if isinstance(thm, HyperTheorem):
+        elif isinstance(thm, HyperTheorem):
             new_facts = thm.rule(facts)
-        if new_facts is False:
-            print("error applying theorem")
-            return
+        else:
+            return False
 
+        if new_facts is False:
+            return False
+
+        # Set up provenance for new facts
         new_dis_ancestors = set.union(*[fact.dis_ancestors for fact in facts])
         dependency_labels = [fact.label for fact in facts]
         for new_fact in new_facts:
-            # update the immediate dependencies for the concluded fact
             new_fact.dependencies = dependency_labels
             new_fact.conc_thm = thm
-            # union of all the disjunction ancestors of all its predecessors
             new_fact.dis_ancestors = new_dis_ancestors
 
-        self.process_new_facts(new_facts)  # replace any ?'s
+        self.process_new_facts(new_facts)
         self.add_new_facts(new_facts)
 
-        for f in list(new_facts):
+        # Include disjunction sub-facts in return
+        result = list(new_facts)
+        for f in new_facts:
             if isinstance(f, Disjunction):
-                new_facts += f.facts  # add in the facts from disjunctions
+                result.extend(f.facts)
 
-        return new_facts
+        return result
 
-    # look for any ? symbols in the list of facts, and generate symbols for them
-    # replace the question marks in the list of facts
-    def process_new_facts(self, new_facts):
-        sym_dict = {}
+    def process_new_facts(self, new_facts: List[Union[Fact, Disjunction]]) -> None:
+        """
+        Replace placeholder symbols (starting with ?) with fresh unique symbols.
 
-        # first break up the disjunctions into their component facts
-        simple_fact_list = []
+        Args:
+            new_facts: List of facts/disjunctions to process
+        """
+        sym_dict: Dict[str, str] = {}
+
+        # Flatten disjunctions into simple facts
+        simple_facts: List[Fact] = []
         for fact in new_facts:
             if isinstance(fact, Fact):
-                simple_fact_list.append(fact)
+                simple_facts.append(fact)
             elif isinstance(fact, Disjunction):
-                simple_fact_list += fact.facts
-            else:
-                print("not Fact or Disjunction")
+                simple_facts.extend(fact.facts)
 
-        for fact in simple_fact_list:
-            args = fact.args
-            for i in range(0, len(args)):
-
-                if (sym := args[i]) is None:
-                    print("error")
-                    fact.do_print()
-                    self.exec_command("display")
-
-                if sym[0] == "?":
-                    # print("question mark detected")
+        # Replace placeholder symbols
+        for fact in simple_facts:
+            for i, sym in enumerate(fact.args):
+                if sym is None:
+                    raise ValueError(f"Null argument in fact: {fact}")
+                if isinstance(sym, str) and sym.startswith("?"):
                     if sym not in sym_dict:
-                        new_symbol = self.generate_new_symbol()
-                        # print("new_symbol: ", new_symbol)
-                        sym_dict[sym] = new_symbol
-                    args[i] = sym_dict[sym]
+                        sym_dict[sym] = self.generate_new_symbol()
+                    fact.args[i] = sym_dict[sym]
 
-        # print("--------------Testing------------")
-        # for fact in simple_fact_list:
-        #    fact.do_print()
-        # print("--------------Done Testing -------")
+    def generate_new_symbol(self) -> str:
+        """
+        Produce a new unique symbol.
 
-    # produce a new symbol
-    # a symbol is a string consisting of an uppercase letter followed by a sequence of digits
-    def generate_new_symbol(self):
-        try:
-            while True:
-                self.cur_suffix
-                suffix = ""
-                if self.cur_suffix != 0:
-                    suffix = str(self.cur_suffix)
-                new_symbol = self.cur_letter + suffix
-                if self.cur_letter == "Z":
-                    self.cur_letter = "A"
-                    self.cur_suffix += 1
-                else:
-                    # increment cur_letter
-                    self.cur_letter = chr(ord(self.cur_letter) + 1)
-                if new_symbol not in self.symbol_set:
-                    if new_symbol is None:
-                        print("error: returning None")
-                    return new_symbol
-        except AttributeError:  # slightly unusual structure
-            self.cur_letter = "A"
-            self.cur_suffix = 0
-            return self.generate_new_symbol()
+        A symbol is a string consisting of an uppercase letter followed by
+        an optional sequence of digits (e.g., 'A', 'B', ..., 'Z', 'A1', 'B1', ...).
+
+        Returns:
+            A unique symbol not yet in the environment's symbol set.
+        """
+        while True:
+            suffix = "" if self.cur_suffix == 0 else str(self.cur_suffix)
+            new_symbol = self.cur_letter + suffix
+
+            # Advance to next letter/suffix
+            if self.cur_letter == "Z":
+                self.cur_letter = "A"
+                self.cur_suffix += 1
+            else:
+                self.cur_letter = chr(ord(self.cur_letter) + 1)
+
+            if new_symbol not in self.symbol_set:
+                self.symbol_set.add(new_symbol)
+                return new_symbol
 
     # enter into case mode using a particular disjunction
     # def enter_cases(self, dis):
@@ -552,143 +573,83 @@ class Proof_environment:
             fact.do_print()
             print()
 
-    def exec_command(self, cmd):
-        cmd_list = cmd.split()
-        cmd_name = cmd_list[0]
-        cmd_args = cmd_list[1:]
-
-        if cmd_name == "apply":
-            thm_name = cmd_args[0]
-            if thm_name in self.theorem_name_dict:
-                thm = self.theorem_name_dict[thm_name]
-            else:
-                print("theorem name not recognized")
-                return
-            thm_args = cmd_args[1:]  # list of fact labels
-            in_facts = [
-                self.fact_labels[lbl] for lbl in thm_args
-            ]  # the corresponding list of facts
-            self.apply_thm(thm, in_facts)
+    def _cmd_apply(self, args: List[str]) -> None:
+        """Apply a theorem to specified facts."""
+        if not args:
+            print("Usage: apply <theorem_name> <fact_labels...>")
             return
-
-        # case disjunction index
-
-        # an easier-to-implement version of case
-        # all or nothing: either prove the result by iterating through some cases, or fail
-        if cmd_name == "cases":
-
-            print("DEPRECATED")
+        thm_name = args[0]
+        if thm_name not in self.theorem_name_dict:
+            print(f"Theorem '{thm_name}' not recognized")
             return
+        thm = self.theorem_name_dict[thm_name]
+        fact_labels = args[1:]
+        facts = [self.fact_labels[lbl] for lbl in fact_labels]
+        self.apply_thm(thm, facts)
 
-            if self.case_depth >= 1:
-                print("only one level of cases supported")
-                return
+    def exec_command(self, cmd: str) -> Optional[bool]:
+        """
+        Execute an interactive command.
 
-            lbl = cmd_args[0]
-            dis = self.fact_labels[lbl]
-            if type(dis) != Disjunction:
-                print("not a disjunction")
-                return
+        Args:
+            cmd: Command string (e.g., "apply sylow F0 F1")
 
-            self.start_cases(dis)
-            return
+        Returns:
+            False to exit, None otherwise
+        """
+        parts = cmd.split()
+        if not parts:
+            return None
 
-        if cmd_name == "conclude":
+        cmd_name = parts[0]
+        cmd_args = parts[1:]
 
-            print("DEPRECATED")
-            return
-
-            conclusion_lbl = cmd_args[0]
-            conclusion = self.fact_labels[conclusion_lbl]
-            if not conclusion.equals(self.goal):
-                print("conclusion is not the goal")
-                return
-
-            if self.case_depth == 0:  # not in any cases
-                print("goal achieved")
-
-            if self.case_depth > 0:
-                done = self.case_solved()
-                if done:
-                    print("goal achieved")
-
-            return
-
-        if cmd_name == "display":
-            self.print_facts()
-            return
+        commands = {
+            "apply": self._cmd_apply,
+            "display": lambda _: self.print_facts(),
+        }
 
         if cmd_name == "exit":
             return False
 
-        print("Unkown Command")
-
-    def start_cases(self, dis):
-        self.num_cases = len(dis.facts)  # how many cases to deal with
-        self.solved_cases = 0  # how many cases have been solved
-        self.case_depth += 1
-        self.case_dis = dis
-        self.case_fact = (dis.facts[self.solved_cases]).copy()
-        self.add_new_facts([self.case_fact])
-
-    # called when a new case has been verified to be solved
-    # return True if all cases have been exhausted
-    def case_solved(self):
-        self.solved_cases += 1
-        self.remove_facts_by_depth(self.case_depth)
-        if self.solved_cases == self.num_cases:
-            done = True
-            self.case_depth -= 1
+        if cmd_name in commands:
+            commands[cmd_name](cmd_args)
         else:
-            done = False
-            self.case_fact = ((self.case_dis).facts[self.solved_cases]).copy()
-            self.add_new_facts([self.case_fact])
-        return done
+            print(f"Unknown command: {cmd_name}")
 
-    # remove facts at a particular depth
-    def remove_facts_by_depth(self, D):
-        fact_labels = self.fact_labels
-        for lbl in dict(fact_labels):  # copy first, slightly annoying
-            fact = fact_labels[lbl]
-            if fact.depth == D:
-                self.remove_fact(lbl)
+        return None
 
-    def remove_fact(self, lbl):
-        fact = self.fact_labels[lbl]
-        self.facts.remove(fact)
-        del self.fact_labels[lbl]
+    def print_derivation(
+        self, fact_label: str, derived_fact_labels: Optional[Set[str]] = None
+    ) -> None:
+        """
+        Print the derivation tree for a fact.
 
-    # print a log describing how a fact was reached
-
-    def print_derivation(self, fact_label, derived_fact_labels=None):
+        Args:
+            fact_label: Label of the fact to trace
+            derived_fact_labels: Set of already-printed labels (for recursion)
+        """
         if derived_fact_labels is None:
             derived_fact_labels = set()
-        # backtrack through the depency graph
-        # mark the goal with a depth of 0 (0 is the deepest - we're measuring from the bottom of the ocean)
-        # the depth of any other fact is
 
         fact = self.fact_labels[fact_label]
-        if fact.dependencies != []:  # the fact was not an assumption
-            thm = fact.conc_thm
-            thm_name = thm.name
 
-            # make sure all the hypotheses have been proven
+        if fact.dependencies:
+            # Recursively print dependencies first
             for label in fact.dependencies:
                 if label not in derived_fact_labels:
                     self.print_derivation(label, derived_fact_labels)
 
-            print("Applying theorem ", thm_name, " to ",
-                  fact.dependencies, " we have: ")
-            fact.do_print()
+            deps_str = ", ".join(fact.dependencies)
+            print(f"Applying theorem {fact.conc_thm.name} to [{deps_str}] we have:")
+            print(f"  {fact}")
             print()
-
-            derived_fact_labels.add(fact_label)
-
         else:
-            print("By assumption we have: ")
-            fact.do_print()
+            print("By assumption we have:")
+            print(f"  {fact}")
             print()
-            derived_fact_labels.add(fact_label)
+
+        derived_fact_labels.add(fact_label)
 
 
 # given a list of facts and the input structure to a theorem, output all possible tuples of input facts
@@ -702,80 +663,101 @@ class Proof_environment:
 # (a more compact data structure could take the form of a tree)
 
 
-# if new_facts is not None, then only look for matches containing new_facts
-def match_facts_to_theorem(thm_facts, facts, new_facts=None):
+def match_facts_to_theorem(
+    thm_facts: List[Fact],
+    facts: List[Fact],
+    new_facts: Optional[List[Fact]] = None
+) -> List[List[Fact]]:
+    """
+    Find all fact combinations matching a theorem's premises.
 
+    Args:
+        thm_facts: The theorem's premise patterns
+        facts: Available facts to match against
+        new_facts: If provided, only return matches containing at least one new fact
+
+    Returns:
+        List of fact lists, each matching all theorem premises
+    """
     if new_facts is None:
-        new_facts = facts  # just assume every fact is new
+        new_facts = facts
 
-    cur_matches = [
-        []
-    ]  # the current list of (lists of facts which match the first i theorem hypotheses)
-    # list of (matching dicts) corresponding to the lists in cur_matches
-    dicts = [{}]
-    uses_new_list = [False]
-    # build a dictionary consisting of all the matches to each theorem hypothesis
-    for i in range(0, len(thm_facts)):
+    # Track partial matches: (matched_facts, substitution_dict, uses_new_fact)
+    cur_matches: List[List[Fact]] = [[]]
+    dicts: List[Dict[str, Any]] = [{}]
+    uses_new_list: List[bool] = [False]
+
+    for premise in thm_facts:
         new_cur_matches = []
         new_dicts = []
         new_uses_new_list = []
+
         for match, match_dict, uses_new in zip(cur_matches, dicts, uses_new_list):
-            new_fact_matches, new_fact_dicts = match_facts_to_template(
-                thm_facts[i], facts, init_match_dict=match_dict
+            matched_facts, matched_dicts = match_facts_to_template(
+                premise, facts, init_match_dict=match_dict
             )
-            for new_match, new_dict in zip(new_fact_matches, new_fact_dicts):
-                new_cur_matches.append(list(match) + [new_match])
-                new_dicts.append(dict(new_dict))
+            for new_match, new_dict in zip(matched_facts, matched_dicts):
+                new_cur_matches.append(match + [new_match])
+                new_dicts.append(new_dict)
                 new_uses_new_list.append(uses_new or (new_match in new_facts))
+
         cur_matches = new_cur_matches
         dicts = new_dicts
         uses_new_list = new_uses_new_list
 
-    ret = []
-    for match, uses_new_fact in zip(cur_matches, uses_new_list):
-        if uses_new_fact:
-            ret.append(match)
-    return ret
+    # Filter to matches containing at least one new fact
+    return [match for match, uses_new in zip(cur_matches, uses_new_list) if uses_new]
 
 
-# find all facts that match a given template structure
-# also returns the associated matching dict
-# optional argument init_match_dict gives literals corresponding to a subset of arguments in template
-# not necessarily as efficient as possible
-def match_facts_to_template(template, facts, init_match_dict=None):
-    init_match_dict = {} if init_match_dict is None else init_match_dict
-    matches = []
-    dicts = []
-    template_name = template.name
-    template_args = template.args
+def match_facts_to_template(
+    template: Fact,
+    facts: List[Fact],
+    init_match_dict: Optional[Dict[str, Any]] = None
+) -> Tuple[List[Fact], List[Dict[str, Any]]]:
+    """
+    Find all facts matching a template pattern.
+
+    Args:
+        template: The pattern to match (may contain variables)
+        facts: Available facts to match against
+        init_match_dict: Initial variable bindings to respect
+
+    Returns:
+        Tuple of (matching_facts, substitution_dicts)
+    """
+    init_match_dict = init_match_dict or {}
+    matches: List[Fact] = []
+    dicts: List[Dict[str, Any]] = []
 
     for fact in facts:
-        if fact.name != template_name:
+        if fact.name != template.name:
             continue
-        if len(fact.args) != len(template_args):
+        if len(fact.args) != len(template.args):
             continue
-        # length and name match
-        match_dict = dict(init_match_dict)  # make a copy
 
-        match = True
-        for arg_pair in zip(template_args, fact.args):
-            temp_arg = arg_pair[0]
-            fact_arg = arg_pair[1]
+        match_dict = dict(init_match_dict)
+        is_match = True
 
-            if temp_arg[0] == "*":
+        for temp_arg, fact_arg in zip(template.args, fact.args):
+            # Exact match required (prefixed with *)
+            if isinstance(temp_arg, str) and temp_arg.startswith("*"):
                 if temp_arg[1:] != fact_arg:
-                    match = False
+                    is_match = False
                     break
+                continue
 
+            # Variable binding
             if temp_arg not in match_dict:
                 match_dict[temp_arg] = fact_arg
             elif match_dict[temp_arg] != fact_arg:
-                match = False
+                is_match = False
                 break
-        if match:
+
+        if is_match:
             matches.append(fact)
-            dicts.append(dict(match_dict))
-    return [matches, dicts]
+            dicts.append(match_dict)
+
+    return matches, dicts
 
 
 def auto_solve(pf_envir: 'Proof_environment') -> bool:
@@ -805,12 +787,8 @@ def auto_solve(pf_envir: 'Proof_environment') -> bool:
     Returns:
         True if goal was proven, False otherwise
     """
-    from collections import deque
-
     # Build trigger index: map (fact_name, num_args) -> list of (theorem, premise_index, premises)
-    TriggerKey = Tuple[str, int]  # (fact_name, num_args)
-    TriggerValue = Tuple[Any, int, List[Fact]]  # (theorem, premise_idx, premises)
-    trigger_index: Dict[TriggerKey, List[TriggerValue]] = {}
+    trigger_index: Dict[Tuple[str, int], List[Tuple[Any, int, List[Fact]]]] = {}
 
     for thm in pf_envir.theorems:
         for i, premise in enumerate(thm.facts):
@@ -853,6 +831,10 @@ def auto_solve(pf_envir: 'Proof_environment') -> bool:
 
         # Process each fact in the batch
         for fact in batch:
+            # Skip Disjunctions - only process Facts
+            if not isinstance(fact, Fact):
+                continue
+
             # Find triggered theorems using the index
             key = (fact.name, len(fact.args))
             triggers = trigger_index.get(key, [])
@@ -964,12 +946,11 @@ def _unify_facts(template: Fact, fact: Fact, substitution_dict: Dict[str, Any]) 
     Try to unify template with fact, updating substitution_dict in place.
 
     Unification matches a template fact (with variables) against a concrete fact,
-    binding variables to values. This is optimized to avoid string allocations
-    by comparing structurally when possible.
+    binding variables to values.
 
-    Variable convention:
-    - Uppercase strings (e.g., 'G', 'H') are variables that can bind to any value
-    - Lowercase strings and other values must match exactly
+    Variable convention (matching original code):
+    - All template arguments are treated as variables that can bind to any value
+    - Arguments starting with '*' require exact match (e.g., '*1' must match '1')
 
     Args:
         template: The pattern fact (may contain variables)
@@ -980,13 +961,13 @@ def _unify_facts(template: Fact, fact: Fact, substitution_dict: Dict[str, Any]) 
         True if unification succeeds (template matches fact), False otherwise
 
     Example:
-        >>> template = Fact("order", ["G", 12])
-        >>> fact = Fact("order", ["group1", 12])
+        >>> template = Fact("order", ["G", "n"])
+        >>> fact = Fact("order", ["group1", "12"])
         >>> subst = {}
         >>> _unify_facts(template, fact, subst)
         True
         >>> subst
-        {'G': 'group1'}
+        {'G': 'group1', 'n': '12'}
     """
     if template.name != fact.name:
         return False
@@ -994,21 +975,17 @@ def _unify_facts(template: Fact, fact: Fact, substitution_dict: Dict[str, Any]) 
         return False
 
     for t_arg, f_arg in zip(template.args, fact.args):
-        # Structural comparison - avoid string conversion
-        if isinstance(t_arg, str):
-            if t_arg.isupper():  # Variable (uppercase)
-                if t_arg in substitution_dict:
-                    if substitution_dict[t_arg] != f_arg:
-                        return False
-                else:
-                    substitution_dict[t_arg] = f_arg
-            else:  # Exact match required
-                if t_arg != f_arg:
-                    return False
-        else:
-            # Both should be the same type and value
-            if t_arg != f_arg:
+        if isinstance(t_arg, str) and t_arg.startswith("*"):
+            # Exact match required (strip the '*' prefix)
+            if t_arg[1:] != f_arg:
                 return False
+        elif t_arg in substitution_dict:
+            # Variable already bound - must match
+            if substitution_dict[t_arg] != f_arg:
+                return False
+        else:
+            # New variable binding
+            substitution_dict[t_arg] = f_arg
 
     return True
 
@@ -1602,256 +1579,190 @@ thm_names = {
 
 
 ########################################## TESTING #####################################################
-def test1():
+# Tests are named with test_ prefix for pytest discovery
 
-    # subgroup_trans theorem
-    facts = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
+
+def test_disjunction_proof() -> None:
+    """Test proof with disjunctions using subgroup transitivity."""
+    # Define subgroup transitivity theorem
+    premises = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
     conclusions = [Fact("subgroup", ["A", "C"])]
-    subgroup_trans = Theorem(facts, conclusions, "subgroup_trans")
+    subgroup_trans = Theorem(premises, conclusions, "subgroup_trans")
 
-    fact2 = Fact("subgroup", ["X", "Y"])
-    fact3 = Fact("subgroup", ["X", "Z"])
+    # Set up facts with a disjunction
+    fact1 = Fact("subgroup", ["X", "Y"])
+    fact2 = Fact("subgroup", ["X", "Z"])
     d1 = Fact("subgroup", ["Y", "A"])
     d2 = Fact("subgroup", ["Z", "A"])
     dis = Disjunction([d1, d2])
 
-    facts = [fact2, fact3, dis]
+    facts = [fact1, fact2, dis]
     theorems = [subgroup_trans]
-    theorem_names = {"subgroup_trans": subgroup_trans}
+    theorem_dict = {"subgroup_trans": subgroup_trans}
     goal = Fact("subgroup", ["X", "A"])
 
-    pf_envir = Proof_environment(facts, theorems, theorem_names, goal)
-
-    running = True
-    # while(running != False):
-    #        cmd = input()
-    #        running = pf_envir.exec_command(cmd)
+    pf_envir = Proof_environment(facts, theorems, theorem_dict, goal)
     pf_envir.exec_command("apply subgroup_trans F1 F4")
-    pf_envir.exec_command("display")
     pf_envir.exec_command("apply subgroup_trans F0 F3")
-    if pf_envir.goal_achieved:
-        print("DONE")
+
+    assert pf_envir.goal_achieved, "Should prove X is subgroup of A"
 
 
-def test2():
-
-    global thm_list
-    global thm_names
-
-    fact1 = Fact("group", ["G"])
-    fact2 = Fact("order", ["G", "6"])
-    fact3 = Fact("simple", ["G"])
-    facts = [fact1, fact2, fact3]
-
-    goal = Fact("false", [])
-
-    pf_envir = Proof_environment(facts, thm_list, thm_names, goal)
-
-    running = True
-    while running:
-        cmd = input()
-        running = pf_envir.exec_command(cmd)
-
-
-def matching_test():
+def test_matching() -> None:
+    """Test theorem matching logic."""
     def foo(first, second, third):
         return Fact("foo", [first, second, third])
 
-    def bar(a, b, c):
-        return Fact("bar", [a, b, c])
-
-    template = foo("W", "X", "W")
-    # facts = [foo('A','B','C'), foo('D','C','D'), foo('C','A','A'), foo('A','C','A'), bar('x','y','x'), bar('x','x','x'), bar('x','x','u')]
     facts = [foo("A", "B", "C"), foo("D", "E", "F")]
     thm_facts = [foo("X", "Y", "Z"), foo("X", "Y", "Z")]
 
     matches = match_facts_to_theorem(thm_facts, facts, [foo("A", "B", "C")])
 
-    print("in matching_test")
-    for match in matches:
-        for fact in match:
-            fact.do_print()
-        print(" ")
+    # Should find matches that include the new fact
+    assert len(matches) > 0, "Should find at least one match"
 
 
-#   matches,dicts = match_facts_to_template(template, facts)
-#    for match in matches:
-#       match.do_print()
-#    print(dicts)
-
-
-def auto_test():
-    facts = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
+def test_subgroup_transitivity_chain() -> None:
+    """Test auto_solve on a chain of subgroup relations."""
+    premises = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
     conclusions = [Fact("subgroup", ["A", "C"])]
-    subgroup_trans = Theorem(facts, conclusions, "subgroup_trans")
+    subgroup_trans = Theorem(premises, conclusions, "subgroup_trans")
 
-    fact1 = Fact("subgroup", ["X", "Y"])
-    fact2 = Fact("subgroup", ["Y", "Z"])
-    fact3 = Fact("subgroup", ["Z", "A"])
-    fact4 = Fact("subgroup", ["A", "B"])
-    fact5 = Fact("subgroup", ["B", "C"])
-    fact6 = Fact("subgroup", ["C", "D"])
-    fact7 = Fact("subgroup", ["D", "E"])
-    fact8 = Fact("subgroup", ["E", "F"])
-
-    facts = [fact4, fact7, fact1, fact3, fact2, fact6, fact5, fact8]
+    facts = [
+        Fact("subgroup", ["X", "Y"]),
+        Fact("subgroup", ["Y", "Z"]),
+        Fact("subgroup", ["Z", "A"]),
+        Fact("subgroup", ["A", "B"]),
+        Fact("subgroup", ["B", "C"]),
+        Fact("subgroup", ["C", "D"]),
+        Fact("subgroup", ["D", "E"]),
+        Fact("subgroup", ["E", "F"]),
+    ]
     theorems = [subgroup_trans]
-    theorem_names = {"subgroup_trans": subgroup_trans}
+    theorem_dict = {"subgroup_trans": subgroup_trans}
     goal = Fact("subgroup", ["X", "F"])
 
-    pf_envir = Proof_environment(facts, theorems, theorem_names, goal)
+    pf_envir = Proof_environment(facts, theorems, theorem_dict, goal)
+    result = auto_solve(pf_envir)
 
-    auto_solve(pf_envir)
-
-
-# There are two pieces of test code currently in play: 'test' in the list of facts, as well as a dummy order 18 is bad theorem
-# remove them one at a time, and be done
-def auto_test2():
-    global thm_list
-    global thm_names
-
-    while True:
-        order = input("Enter a group order: ")
-        fact1 = Fact("group", ["G"])
-        fact2 = Fact("order", ["G", order])
-        fact3 = Fact("simple", ["G"])
-
-        #     test = max_sylow_intersection('G','3','3')
-
-        facts = [fact1, fact2, fact3]
-        goal = Fact("false", [])
-
-        pf_envir = Proof_environment(facts, thm_list, thm_names, goal)
-
-        auto_solve(pf_envir)
+    assert result, "Should prove X is subgroup of F through transitivity chain"
 
 
-def easy_dis_test():
-    def subgroup(A, B):
+def test_simple_disjunction() -> None:
+    """Test auto_solve with simple disjunction."""
+    def sub(A, B):
         return Fact("subgroup", [A, B])
 
-    def OR(f1, f2):
-        return Disjunction([f1, f2])
-
-    facts = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
+    premises = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
     conclusions = [Fact("subgroup", ["A", "C"])]
-    subgroup_trans = Theorem(facts, conclusions, "subgroup_trans")
+    subgroup_trans = Theorem(premises, conclusions, "subgroup_trans")
 
     facts = [
-        OR(subgroup("A", "B"), subgroup("A", "X")),
-        #            OR(subgroup('A','B'), subgroup('A','X')),
-        subgroup("B", "D"),
-        subgroup("X", "D"),
+        Disjunction([sub("A", "B"), sub("A", "X")]),
+        sub("B", "D"),
+        sub("X", "D"),
     ]
     theorems = [subgroup_trans]
-    theorem_names = {"subgroup_trans": subgroup_trans}
-    goal = subgroup("A", "D")
+    theorem_dict = {"subgroup_trans": subgroup_trans}
+    goal = sub("A", "D")
 
-    pf_envir = Proof_environment(facts, theorems, theorem_names, goal)
-    auto_solve(pf_envir)
+    pf_envir = Proof_environment(facts, theorems, theorem_dict, goal)
+    result = auto_solve(pf_envir)
+
+    assert result, "Should prove A is subgroup of D through either branch"
 
 
-def auto_dis_test():
-
-    def subgroup(A, B):
+def test_complex_disjunction() -> None:
+    """Test auto_solve with multiple disjunctions."""
+    def sub(A, B):
         return Fact("subgroup", [A, B])
 
-    def OR(f1, f2):
-        return Disjunction([f1, f2])
-
-    facts = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
+    premises = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
     conclusions = [Fact("subgroup", ["A", "C"])]
-    subgroup_trans = Theorem(facts, conclusions, "subgroup_trans")
+    subgroup_trans = Theorem(premises, conclusions, "subgroup_trans")
 
     facts = [
-        OR(subgroup("A", "B"), subgroup("C", "D")),
-        OR(subgroup("B", "F"), subgroup("D", "F")),
-        subgroup("B", "D"),
-        subgroup("D", "B"),
-        subgroup("X", "A"),
-        subgroup("X", "C"),
+        Disjunction([sub("A", "B"), sub("C", "D")]),
+        Disjunction([sub("B", "F"), sub("D", "F")]),
+        sub("B", "D"),
+        sub("D", "B"),
+        sub("X", "A"),
+        sub("X", "C"),
     ]
-
     theorems = [subgroup_trans]
-    theorem_names = {"subgroup_trans": subgroup_trans}
-    goal = subgroup("X", "F")
+    theorem_dict = {"subgroup_trans": subgroup_trans}
+    goal = sub("X", "F")
 
-    pf_envir = Proof_environment(facts, theorems, theorem_names, goal)
-    auto_solve(pf_envir)
+    pf_envir = Proof_environment(facts, theorems, theorem_dict, goal)
+    result = auto_solve(pf_envir)
 
-
-def alternating_test():
-    global thm_list
-    global thm_names
-    #    thm_list = [embed_in_An]
-    #   thm_names = ["embed_in_An", embed_in_An]
-    fact1 = Fact("simple", ["G"])
-    fact2 = Fact("num_sylow", ["3", "G", "4"])
-    fact3 = Fact("order", ["G", "12"])
-    goal = Fact("false", [])
-
-    pf_envir = Proof_environment([fact1, fact2, fact3], thm_list, thm_names, goal)
-    auto_solve(pf_envir)
+    assert result, "Should prove X is subgroup of F through disjunction cases"
 
 
-def order_counting_test():
-    global thm_list
-    global thm_names
+def test_alternating_embedding() -> None:
+    """Test embedding into alternating group."""
+    facts = [
+        group("G"),
+        simple("G"),
+        Fact("num_sylow", ["3", "G", "4"]),
+        order("G", "12"),
+    ]
+    goal = false()
 
-    fact1 = group("G")
-    fact2 = order("G", "30")
-    #    fact3 = OR(not_simple('G'), false())
-    #    fact4 = OR(simple('G'), false())
-    fact5 = sylow_p_subgroup("P5", "5", "G")
-    fact6 = sylow_p_subgroup("P3", "3", "G")
-    fact7 = order("P5", "5")
-    fact8 = order("P3", "3")
-    fact9 = simple("G")
+    pf_envir = Proof_environment(facts, thm_list, thm_names, goal)
+    result = auto_solve(pf_envir)
 
-    fact_list = [fact1, fact2, fact3, fact4, fact5, fact6, fact7, fact8, fact9]
-    #    fact_list = [fact3,fact4]
-    pf_envir = Proof_environment(fact_list, thm_list, thm_names, false())
-    auto_solve(pf_envir)
-
-    # Problem seems to occur when we have
-    # (A or B), (C or D).  A -> Goal, C -> Goal, (B,D)->Goal
+    assert result, "Should find contradiction for order 12 simple group"
 
 
-# def hard_disjunction_test():
-#    def test_fact(A,B):
-#        return Fact("fact", [A,B])
+def test_element_counting() -> None:
+    """Test element counting contradictions."""
+    facts = [
+        group("G"),
+        order("G", "30"),
+        sylow_p_subgroup("P5", "5", "G"),
+        sylow_p_subgroup("P3", "3", "G"),
+        order("P5", "5"),
+        order("P3", "3"),
+        simple("G"),
+    ]
+    goal = false()
+
+    pf_envir = Proof_environment(facts, thm_list, thm_names, goal)
+    result = auto_solve(pf_envir)
+
+    assert result, "Should find contradiction by counting elements"
 
 
-def find_hard_orders(in_file):
-
-    global thm_list
-    global thm_names
-
+def find_hard_orders(in_file: str) -> None:
+    """Find orders where the prover fails to prove non-simplicity."""
     with open(in_file, encoding="utf-8") as f:
         for n in f:
+            n = n.strip()
+            if not n:
+                continue
             facts = [group("G"), simple("G"), order("G", n)]
             pf_envir = Proof_environment(facts, thm_list, thm_names, false())
-            if success := auto_solve(pf_envir):
-                print(n, " : SUCCESS")
+            if auto_solve(pf_envir):
+                print(f"{n}: SUCCESS")
             else:
-                print(n, " : FAILURE")
+                print(f"{n}: FAILURE")
 
 
-# def normalizer_test():
-#    global thm_list
-#    global thm_names
-#
-#    theorem_names = copy.copy(thm_names)
+def interactive_test() -> None:
+    """Interactive test for manual exploration."""
+    while True:
+        try:
+            n = input("Enter a group order (or 'quit'): ")
+            if n.lower() == 'quit':
+                break
+            facts = [group("G"), simple("G"), order("G", n)]
+            pf_envir = Proof_environment(facts, thm_list, thm_names, false())
+            auto_solve(pf_envir)
+        except KeyboardInterrupt:
+            break
 
-#    in_facts = [order('G','*18')]
-#    out_facts = [false()]
-# eighteen_bad = new Theorem()
-#    theorem_names.append()
-#    pf_envir = Proof_environment(facts,theorems,theorem_names, goal)
-#    auto_solve(pf_envir)
 
-
-# find_hard_orders('interesting_10000.txt')
-auto_test2()
-
-# auto_test2()
+if __name__ == "__main__":
+    # Run interactive test by default
+    interactive_test()

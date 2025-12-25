@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Environment.Facts
   ( addNewFacts
   , applyThm
@@ -8,13 +10,12 @@ import Core
 import Environment.Types
 import Environment.Accessors
 import Environment.Labels
-import Environment.Goals
+import Environment.Goals (updateGoalAchieved, updateUseful)
 import Environment.Variables
 import Unification
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.List (foldl')
 
 -- Apply a theorem to facts and generate new conclusions
 applyThm :: ProofEnvironment -> Thm -> [FactEntry] -> (ProofEnvironment, [FactEntry])
@@ -48,10 +49,10 @@ applyStdThm thm facts =
 -- Add new facts and disjunctions to the environment
 addNewFacts :: ProofEnvironment -> [NewConclusion] -> (ProofEnvironment, [FactEntry])
 addNewFacts env concs =
-  let (env', newEntriesReversed) = foldl addOne (env, []) concs
+  let (env', newEntriesReversed) = foldl' addOne (env, []) concs
   in (env', reverse newEntriesReversed)
   where
-    addOne (acc, addedFactsReversed) nc =
+    addOne (!acc, !addedFactsReversed) nc =
       case ncConclusion nc of
         CFact f ->
           let (acc', entry) = addFact acc nc f
@@ -66,11 +67,7 @@ addNewFacts env concs =
             Set.union
               (peSymbolSet acc')
               (Set.fromList (map argText (factArgs f)))
-          prov = Provenance
-            { provDeps = ncDependencies nc
-            , provDisAncestors = ncDisAncestors nc
-            , provThm = ncConcThm nc
-            }
+          prov = mkProvenance nc
           entry =
             FactEntry
               { feFact = f
@@ -87,7 +84,7 @@ addNewFacts env concs =
             }) acc'
           acc''' = updateGenState (\gs -> gs { gsSymbolSet = symbols' }) acc''
           accGoal =
-            if factEquals f (peGoal acc''')
+            if f == peGoal acc'''
               then
                 let accG = updateGoalState (\gst -> gst
                       { gsDisCombos = ncDisAncestors nc : gsDisCombos gst }) acc'''
@@ -97,11 +94,7 @@ addNewFacts env concs =
        in (accGoal, entry)
 
     addDisjunction acc nc fs =
-      let prov = Provenance
-            { provDeps = ncDependencies nc
-            , provDisAncestors = ncDisAncestors nc
-            , provThm = ncConcThm nc
-            }
+      let prov = mkProvenance nc
           disj =
             DisjunctionEntry
               { deFacts = fs

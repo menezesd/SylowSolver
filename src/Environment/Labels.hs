@@ -10,9 +10,8 @@ import Core
 import Environment.Types
 import Environment.Accessors
 import Data.List (sort, sortOn, intercalate)
-import Data.Map.Strict (Map)
+import Data.Maybe (maybeToList)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 
 -- Build structural key from disjunction entry (DisjunctionKey defined in Types)
@@ -41,16 +40,11 @@ canonicalDisjunctionSignature disj =
           | f <- deFacts disj
           ]
       prov =
-        concat
-          [ case deConcThm disj of
-              Nothing -> []
-              Just n -> ["thm:" ++ n]
-          , if Set.null (deDisAncestors disj)
-              then []
-              else
-                let ancLabels = sort (Set.toList (Set.map disjLabelText (deDisAncestors disj)))
-                 in ["anc:" ++ intercalate "," ancLabels]
-          ]
+        map ("thm:" ++) (maybeToList (deConcThm disj))
+          ++ [ "anc:" ++ intercalate "," ancLabels
+             | not (Set.null (deDisAncestors disj))
+             , let ancLabels = sort (Set.toList (Set.map disjLabelText (deDisAncestors disj)))
+             ]
    in if null prov then intercalate "|" sigs else intercalate "|" sigs ++ "::" ++ intercalate "|" prov
 
 -- Convert disjunction ID to text

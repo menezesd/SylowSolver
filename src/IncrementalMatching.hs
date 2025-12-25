@@ -1,13 +1,26 @@
+-- | Incremental theorem matching for efficient forward chaining.
+--
+-- When a new fact is added, this module efficiently finds all theorems
+-- that could potentially fire by using a pre-built trigger index. Each
+-- theorem premise is indexed by its 'FactKey', allowing O(1) lookup of
+-- candidate theorems when a new fact arrives.
+--
+-- The matching process:
+--
+--   1. Look up theorems triggered by the new fact's key
+--   2. For each trigger, try to complete the match by finding facts
+--      for the remaining premises
+--   3. Return all complete matches as (theorem, matched-facts) pairs
+--
 module IncrementalMatching
   ( findTriggeredMatches
+  , matchFactsToTemplate
   ) where
 
 import Core
+import Control.Monad (foldM)
 import Environment.Types (TriggerIndex)
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Env
 import Unification
 
@@ -39,49 +52,37 @@ matchNewFactAtPosition env newFact premises targetIdx
   | otherwise =
       let -- Split premises: before target, target itself, after target
           (beforePremises, targetAndAfter) = splitAt targetIdx premises
-          targetPremise = head targetAndAfter
-          afterPremises = tail targetAndAfter
-
-          -- Try to unify the new fact with the target premise
-          fact = feFact newFact
-          initialMatch = case unifyFact Map.empty targetPremise fact of
-            Left _ -> Nothing
-            Right subst -> Just (subst, [], newFact, [])
-            -- (subst, beforeMatches, targetMatch, afterMatches)
-
-       in case initialMatch of
-            Nothing -> []
-            Just initial -> expandMatches initial beforePremises afterPremises
+       in case targetAndAfter of
+            [] -> []  -- Safety: shouldn't happen due to bounds check, but handle gracefully
+            (targetPremise : afterPremises) ->
+              -- Try to unify the new fact with the target premise
+              let fact = feFact newFact
+                  initialMatch = case unifyFact Map.empty targetPremise fact of
+                    Left _ -> Nothing
+                    Right subst -> Just (subst, [], newFact, [])
+                    -- (subst, beforeMatches, targetMatch, afterMatches)
+               in case initialMatch of
+                    Nothing -> []
+                    Just initial -> expandMatches initial beforePremises afterPremises
   where
-    -- Match premises before and after the target
-    expandMatches (subst, beforeMatches, targetMatch, afterMatches) beforePremises afterPremises =
-      -- Match all "before" premises, accumulating substitutions and matches
-      let matchPremises :: [(Substitution, [FactEntry])] -> [Fact] -> [(Substitution, [FactEntry])]
-          matchPremises acc [] = acc
-          matchPremises acc (premise : rest) =
-            let expanded = [ (s', matches ++ [factEntry])
-                           | (s, matches) <- acc
-                           , (factEntry, s') <- matchFactsToTemplate premise env s
-                           ]
-             in matchPremises expanded rest
+    -- Match premises before and after the target using list monad with foldM
+    expandMatches (subst, _beforeMatches, targetMatch, _afterMatches) beforePremises afterPremises =
+      let -- Match a sequence of premises, threading substitution through
+          matchAll :: (Substitution, [FactEntry]) -> [Fact] -> [(Substitution, [FactEntry])]
+          matchAll start = foldM step start
+            where
+              step (s, matches) premise =
+                [ (s', matches ++ [factEntry])
+                | (factEntry, s') <- matchFactsToTemplate premise env s
+                ]
 
-          -- Match before premises
-          afterBefore = matchPremises [(subst, [])] beforePremises
-
-          -- For each "before" result, match after premises
-          matchAfterPremises :: (Substitution, [FactEntry]) -> [(Substitution, [FactEntry], [FactEntry])]
-          matchAfterPremises (s, beforeFacts) =
-            let afterResults = matchPremises [(s, [])] afterPremises
-             in [(s', beforeFacts, afterFacts) | (s', afterFacts) <- afterResults]
-
-          fullyMatched = concatMap matchAfterPremises afterBefore
-
-          -- Reconstruct in premise order: before ++ [target] ++ after
-          buildResult (_, bm, am) = bm ++ [targetMatch] ++ am
-
-       in map buildResult fullyMatched
+       in do -- List monad: explores all matching possibilities
+            (s', beforeFacts) <- matchAll (subst, []) beforePremises
+            (_, afterFacts) <- matchAll (s', []) afterPremises
+            return (beforeFacts ++ [targetMatch] ++ afterFacts)
 
 -- Match a template fact against existing facts with an initial substitution
+{-# INLINE matchFactsToTemplate #-}
 matchFactsToTemplate :: Fact -> ProofEnvironment -> Substitution -> [(FactEntry, Substitution)]
 matchFactsToTemplate template env initMap =
   let candidateFacts =

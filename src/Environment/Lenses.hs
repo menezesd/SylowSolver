@@ -3,10 +3,24 @@
 -- This module generates lenses for Environment types using Template Haskell.
 -- All generated lenses and re-exported lens operators are available.
 
-module Environment.Lenses where
+module Environment.Lenses
+  ( -- * Lens operators (re-exported from Lens.Micro)
+    (&), (%~), (.~), (^.)
+    -- * FactDatabase lenses
+  , fdFacts, fdOrderedFacts, fdFactLabels, fdFactIndex, fdDisjunctions, fdDisjLabels
+    -- * GoalState lenses
+  , gsGoal, gsAchieved, gsDisCombos
+    -- * GeneratorState lenses
+  , gsCurFactNum, gsCurDisjNum, gsCurLetter, gsCurSuffix, gsSymbolSet
+    -- * CaseState lenses
+  , csCaseDepth, csNumCases, csSolvedCases, csCaseDis, csCaseFact
+    -- * ProofEnvironment lenses
+  , peFactDB, peGoalState, peCaseState, peGenState, peTheorems, peThmNameDict
+    -- * FactEntry lenses
+  , feFact, feLabel, feProv, feUseful, feDepth
+  ) where
 
-import Lens.Micro
-import Lens.Micro.Mtl
+import Lens.Micro ((&), (%~), (.~), (^.))
 import Lens.Micro.TH (makeLenses)
 import Environment.Types
 

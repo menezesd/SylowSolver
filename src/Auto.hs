@@ -1,26 +1,37 @@
+{-# LANGUAGE BangPatterns #-}
+
+-- | Automated theorem proving via forward chaining.
+--
+-- This module implements the main proof search loop using an agenda-based
+-- approach. New facts trigger theorem matching via 'IncrementalMatching',
+-- and derived conclusions are added to the work queue until either:
+--
+--   * The goal is proven (all disjunction branches covered)
+--   * The work queue is exhausted
+--   * The iteration limit is reached
+--
 module Auto
   ( autoSolve
   , matchFactsToTheorem
   ) where
 
-import Core
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Data.Sequence (Seq, ViewL(..), (|>))
-import qualified Data.Sequence as Seq
+-- Standard library
 import Data.Foldable (toList)
 import Data.List (foldl')
+import Data.Sequence ((|>))
+import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
+
+-- Local modules
+import Core
 import Env
 import EnvPrint (printRelevantFacts)
-import Unification
-import IncrementalMatching (findTriggeredMatches)
+import IncrementalMatching (findTriggeredMatches, matchFactsToTemplate)
 
 matchFactsToTheorem :: [Fact] -> ProofEnvironment -> [FactEntry] -> [[FactEntry]]
-matchFactsToTheorem thmFacts env newFacts =
-  let facts = peFacts env -- Access all facts from the environment
-      newLabels = Set.fromList [feLabel f | f <- newFacts]
+matchFactsToTheorem premises env newFacts =
+  let newLabels = Set.fromList [feLabel f | f <- newFacts]
       curMatches = [[]]
       dicts = [Map.empty]
       usesNewList = [False]
@@ -30,24 +41,15 @@ matchFactsToTheorem thmFacts env newFacts =
               | (m, d, uses) <- zip3 matches dictList usesList
               , (f, d') <- matchFactsToTemplate template env d
               ]
-         in (map (\(a, _, _) -> a) expanded, map (\(_, b, _) -> b) expanded, map (\(_, _, c) -> c) expanded)
+         in unzip3 expanded
       (finalMatches, _, finalUses) =
-        foldl' step (curMatches, dicts, usesNewList) thmFacts  -- Use strict foldl'
+        foldl' step (curMatches, dicts, usesNewList) premises  -- Use strict foldl'
    in [m | (m, usesNew) <- zip finalMatches finalUses, usesNew]
 
-matchFactsToTemplate :: Fact -> ProofEnvironment -> Substitution -> [(FactEntry, Substitution)]
-matchFactsToTemplate template env initMap =
-  let candidateFacts =
-        Map.findWithDefault [] (factKey template) (peFactIndex env)
-   in [ (factEntry, matchMap)
-      | factEntry <- candidateFacts
-      , let fact = feFact factEntry
-      , Right matchMap <- [unifyFact initMap template fact]
-      ]
-
 autoSolve :: ProofEnvironment -> IO Bool
-autoSolve env0 = loop env0 (Seq.fromList (peFacts env0)) Set.empty 0
+autoSolve env0 = loop env0 (Seq.fromList (peFacts env0)) Set.empty (0 :: Int)
   where
+    maxIterations :: Int
     maxIterations = 1000
     batchSize = 8  -- Process facts in small batches to reduce loop overhead
 
@@ -90,18 +92,30 @@ autoSolve env0 = loop env0 (Seq.fromList (peFacts env0)) Set.empty 0
               loop env' newQueue processedSet' (iter + 1)
 
     -- Process a batch of facts
-    processBatch env factsToProcess processedSet =
-      foldl' processOneFact (env, [], []) factsToProcess
+    -- Accumulates facts in reverse order, then reverses at the end
+    processBatch env factsToProcess _processedSet =
+      let (env', revNewFacts, revProcessedIds) =
+            foldl' processOneFact (env, [], []) factsToProcess
+       in (env', reverse revNewFacts, reverse revProcessedIds)
       where
-        processOneFact (envAcc, allNewFacts, processedIds) (fact, factId) =
+        processOneFact (!envAcc, !allNewFactsRev, !processedIdsRev) (fact, factId) =
           let triggeredMatches = findTriggeredMatches envAcc fact (peTriggerIndex envAcc)
               (env', newFacts) = applyMatches envAcc triggeredMatches
-           in (env', allNewFacts ++ newFacts, factId : processedIds)
+              -- Prepend new facts (will reverse at end)
+           in (env', reverseOnto newFacts allNewFactsRev, factId : processedIdsRev)
 
     -- Apply a list of (theorem, match) pairs with strict fold
+    -- Accumulates in reverse, then reverses at the end
     applyMatches env matches =
-      foldl' applyOne (env, []) matches
+      let (env', revFacts) = foldl' applyOne (env, []) matches
+       in (env', reverse revFacts)
       where
-        applyOne (envAcc, newFactsAcc) (thm, match) =
+        applyOne (!envAcc, !newFactsAccRev) (thm, match) =
           let (env', newFacts) = applyThm envAcc thm match
-           in (env', newFactsAcc ++ newFacts)
+           in (env', reverseOnto newFacts newFactsAccRev)
+
+    -- Helper: reverse xs onto ys (like reverse xs ++ ys but O(n) not O(2n))
+    {-# INLINE reverseOnto #-}
+    reverseOnto :: [a] -> [a] -> [a]
+    reverseOnto [] !ys = ys
+    reverseOnto (x:xs) !ys = reverseOnto xs (x:ys)
