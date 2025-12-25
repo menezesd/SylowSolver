@@ -17,7 +17,7 @@ import Data.List (foldl')
 import NumberTheory (maxPDivisor)
 import Memoization (numSylowMemo, primeFactorsMemo)
 import Predicates
-import Theorems.Common (arg2, arg3, hyper, stdThm, withNum2)
+import Theorems.Common (arg2, arg3, asNum, hyper, stdThm, withArg2Num, withNum2)
 
 ruleSylow :: [Fact] -> Maybe [Conclusion]
 ruleSylow [factGroup, factOrder] =
@@ -53,15 +53,13 @@ sylowTheorem = hyper "sylow"
 
 ruleSingleSylowNotSimple :: [Fact] -> Maybe [Conclusion]
 ruleSingleSylowNotSimple [factSylow, _factNum, factOrder] =
-  case (arg3 factSylow, arg2 factOrder) of
-    (Just (_hArg, pArg, gArg), Just (_gArg2, nArg)) ->
-      case (pArg, nArg) of
-        (Num p, Num n0) ->
-          let g = argText gArg
-              pPower = isPowerOfP n0 p
-           in if n0 == 0 || pPower then Nothing else Just [CFact (notSimple (sym g))]
-        _ -> Nothing -- Not Num args
-    _ -> Nothing
+  do
+    (_hArg, pArg, gArg) <- arg3 factSylow
+    p <- asNum pArg
+    n0 <- withArg2Num factOrder (\_ n -> n)
+    let g = argText gArg
+        pPower = isPowerOfP n0 p
+    if n0 == 0 || pPower then Nothing else Just [CFact (notSimple (sym g))]
   where
     isPowerOfP n p'
       | n == 1 = True
@@ -86,17 +84,14 @@ simpleNotSimple = stdThm "not_simple"
 ruleEmbedInAn :: [Fact] -> Maybe [Conclusion]
 ruleEmbedInAn [factNum, _factSimple] =
   case arg3 factNum of
-    Just (_pArg, gArg, nPArg) ->
-      case nPArg of
-        Num nP ->
-          let g = argText gArg
-           in if nP > 1
-                then Just
-                  [ CFact (subgroup (sym g) (fresh "alt"))
-                  , CFact (alternatingGroup (fresh "alt") (num nP))
-                  ]
-                else Nothing
-        _ -> Nothing -- Not a Num arg
+    Just (_pArg, gArg, Num nP) ->
+      let g = argText gArg
+       in if nP > 1
+            then Just
+              [ CFact (subgroup (sym g) (fresh "alt"))
+              , CFact (alternatingGroup (fresh "alt") (num nP))
+              ]
+            else Nothing
     _ -> Nothing
 ruleEmbedInAn _ = Nothing
 
@@ -153,16 +148,13 @@ alternatingSimple = hyper "alternating_simple"
 
 ruleSubgroupIndex :: [Fact] -> Maybe [Conclusion]
 ruleSubgroupIndex [factSub, factH, factG] =
-  case (arg2 factSub, arg2 factH, arg2 factG) of
-    (Just (hArg, gArg), Just (_hArg2, mArg), Just (_gArg2, nArg)) ->
-      case (mArg, nArg) of
-        (Num m, Num n) ->
-          let h = argText hArg
-              g = argText gArg
-           in if m /= 0 && n `mod` m == 0
-                then Just [CFact (index (sym g) (sym h) (num (n `div` m)))]
-                else Nothing
-        _ -> Nothing -- Not Num args
+  case (arg2 factSub, withArg2Num factH (,), withArg2Num factG (,)) of
+    (Just (hArg, gArg), Just (_, m), Just (_, n)) ->
+      let h = argText hArg
+          g = argText gArg
+       in if m /= 0 && n `mod` m == 0
+            then Just [CFact (index (sym g) (sym h) (num (n `div` m)))]
+            else Nothing
     _ -> Nothing
 ruleSubgroupIndex _ = Nothing
 
@@ -179,17 +171,14 @@ cosetAction = stdThm "coset_action"
 ruleSimpleGroupAction :: [Fact] -> Maybe [Conclusion]
 ruleSimpleGroupAction [factAction, _factSimple] =
   case arg2 factAction of
-    Just (gArg, nArg) ->
-      case nArg of
-        Num n ->
-          let g = argText gArg
-           in if n > 1
-                then Just
-                  [ CFact (subgroup (sym g) (fresh "alt"))
-                  , CFact (alternatingGroup (fresh "alt") (num n))
-                  ]
-                else Nothing
-        _ -> Nothing -- Not a Num arg
+    Just (gArg, Num n) ->
+      let g = argText gArg
+       in if n > 1
+            then Just
+              [ CFact (subgroup (sym g) (fresh "alt"))
+              , CFact (alternatingGroup (fresh "alt") (num n))
+              ]
+            else Nothing
     _ -> Nothing
 ruleSimpleGroupAction _ = Nothing
 

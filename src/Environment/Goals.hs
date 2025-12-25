@@ -5,7 +5,6 @@ module Environment.Goals
 
 import Core
 import Environment.Types
-import Environment.Types
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -15,27 +14,39 @@ import qualified Data.Set as Set
 updateGoalAchieved :: ProofEnvironment -> ProofEnvironment
 updateGoalAchieved env
   | null observed = env
-  | allCombinationsCovered = updateGoalState (\gs -> gs { gsAchieved = True }) env
-  | otherwise = env
+  | allCombinationsCovered = updateGoalState (\gs -> gs { gsAchieved = True }) envWithCache
+  | otherwise = envWithCache
   where
     observed = peGoalDisCombos env
+    observedIds = Set.map fst (Set.unions observed)
 
-    -- Get all disjunction IDs referenced in proofs
-    allDisjIds = Set.toList $ Set.map fst $ Set.unions observed
+    -- Current disjunction sizes for observed disjunctions
+    currentSizes :: Map.Map DisjId Int
+    currentSizes =
+      Map.fromList
+        [ (deLabel disj, length (deFacts disj))
+        | disj <- peDisjunctions env
+        , Set.member (deLabel disj) observedIds
+        ]
 
-    -- Look up disjunction size from environment
-    disjSize :: DisjId -> Int
-    disjSize d = case Map.lookup (LDisj d) (peFactLabels env) of
-      Just (LDisjEntry disj) -> length (deFacts disj)
-      _ -> 0
+    cachedSizes = peGoalCachedDisjSizes env
+    cachedCombos = peGoalCachedCombos env
 
-    -- Generate all branch indices for each disjunction
-    branchChoices :: [[(DisjId, Int)]]
-    branchChoices = [ [(d, i) | i <- [0 .. disjSize d - 1]] | d <- allDisjIds ]
+    (allCombinations, envWithCache)
+      | currentSizes == cachedSizes && not (null cachedCombos) = (cachedCombos, env)
+      | otherwise =
+          let combos = buildAllCombinations currentSizes
+           in (combos, updateGoalState (\gs -> gs { gsCachedDisjSizes = currentSizes, gsCachedCombos = combos }) env)
 
-    -- All possible combinations of branch choices (Cartesian product)
-    allCombinations :: [Set.Set (DisjId, Int)]
-    allCombinations = map Set.fromList (sequence branchChoices)
+    -- Generate all possible combinations of branches
+    buildAllCombinations :: Map.Map DisjId Int -> [Set.Set (DisjId, Int)]
+    buildAllCombinations sizes =
+      let branchChoices =
+            [ [(d, i) | i <- [0 .. size - 1]]
+            | (d, size) <- Map.toList sizes
+            , size > 0
+            ]
+       in map Set.fromList (sequence branchChoices)
 
     -- A combination is covered if some observed proof covers it
     isCovered :: Set.Set (DisjId, Int) -> Bool

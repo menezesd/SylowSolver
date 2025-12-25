@@ -9,7 +9,6 @@ import Control.Monad (when)
 import Data.Maybe (fromMaybe)
 import Core
 import Environment.Types
-import Environment.Types
 import Environment.Goals (updateGoalAchieved, updateUseful)
 import Environment.Variables
 import ProofMonad
@@ -117,5 +116,4 @@ applyThmM thm facts = do
       let (env', nc') = replaceVariables env nc
       putEnv env'
       addNewFactsM nc'
-
 

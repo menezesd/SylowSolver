@@ -21,15 +21,11 @@ module ProofMonad
 
 -- Standard library
 import Control.Monad.State.Strict
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
-
 -- Local modules
 import Core
 import Environment.Types
-import Environment.Labels (disjunctionKey)
-import Environment.Symbols (nextSymbol)
-import Environment.Types
+import Environment.Labels (newDisjunctionLabel, newFactLabel)
+import Environment.Symbols (generateNewSymbol)
 
 -- The proof monad is a State monad over ProofEnvironment
 newtype ProofM a = ProofM { unProofM :: State ProofEnvironment a }
@@ -65,35 +61,15 @@ getsEnv = gets
 
 -- Generate a new fact label
 newLabelM :: ProofM FactId
-newLabelM = state $ \env ->
-  let lbl = FactId (peCurFactNum env)
-      env' = updateGenState (\gs -> gs { gsCurFactNum = gsCurFactNum gs + 1 }) env
-   in (lbl, env')
+newLabelM = state newFactLabel
 
 -- Generate a new disjunction label (or reuse existing)
 newDisjLabelM :: DisjunctionEntry -> ProofM DisjId
-newDisjLabelM disj = state $ \env ->
-  let key = disjunctionKey disj
-   in case Map.lookup key (peDisjLabels env) of
-        Just existingId -> (existingId, env)
-        Nothing ->
-          let newId = DisjId (peCurDisjNum env)
-              env' = updateGenState (\gs -> gs { gsCurDisjNum = gsCurDisjNum gs + 1 })
-                   . updateFactDB (\db -> db { fdDisjLabels = Map.insert key newId (fdDisjLabels db) })
-                   $ env
-           in (newId, env')
+newDisjLabelM disj = state (\env -> newDisjunctionLabel env disj)
 
 -- Generate a new unique symbol
 generateSymbolM :: ProofM String
-generateSymbolM = state $ \env ->
-  let (newSym, nextLetter', nextSuffix') =
-        nextSymbol (peCurLetter env) (peCurSuffix env) (peSymbolSet env)
-      env' = updateGenState (\gs -> gs
-        { gsCurLetter = nextLetter'
-        , gsCurSuffix = nextSuffix'
-        , gsSymbolSet = Set.insert newSym (gsSymbolSet gs)
-        }) env
-   in (newSym, env')
+generateSymbolM = state generateNewSymbol
 
 -- Update sub-structures in a monadic style
 updateFactDBM :: (FactDatabase -> FactDatabase) -> ProofM ()

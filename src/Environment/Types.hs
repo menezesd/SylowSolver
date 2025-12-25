@@ -33,6 +33,8 @@ module Environment.Types
   , peGoal
   , peGoalAchieved
   , peGoalDisCombos
+  , peGoalCachedDisjSizes
+  , peGoalCachedCombos
   -- Generator state accessors
   , peCurFactNum
   , peCurDisjNum
@@ -130,6 +132,8 @@ data GoalState = GoalState
   { gsGoal :: Fact
   , gsAchieved :: Bool
   , gsDisCombos :: [Set (DisjId, Int)]
+  , gsCachedDisjSizes :: Map DisjId Int
+  , gsCachedCombos :: [Set (DisjId, Int)]
   } deriving stock (Show)
 
 -- Generator state for IDs and symbols
@@ -216,6 +220,14 @@ peGoalAchieved = gsAchieved . peGoalState
 {-# INLINE peGoalDisCombos #-}
 peGoalDisCombos :: ProofEnvironment -> [Set (DisjId, Int)]
 peGoalDisCombos = gsDisCombos . peGoalState
+
+{-# INLINE peGoalCachedDisjSizes #-}
+peGoalCachedDisjSizes :: ProofEnvironment -> Map DisjId Int
+peGoalCachedDisjSizes = gsCachedDisjSizes . peGoalState
+
+{-# INLINE peGoalCachedCombos #-}
+peGoalCachedCombos :: ProofEnvironment -> [Set (DisjId, Int)]
+peGoalCachedCombos = gsCachedCombos . peGoalState
 
 -- GeneratorState accessors
 {-# INLINE peCurFactNum #-}

@@ -8,7 +8,6 @@ module Environment.Labels
 
 import Core
 import Environment.Types
-import Environment.Types
 import Data.List (sort, sortOn, intercalate)
 import Data.Maybe (maybeToList)
 import qualified Data.Map.Strict as Map
@@ -26,10 +25,10 @@ disjunctionKey disj =
         }
 
 -- Generate a new unique fact label
-newFactLabel :: ProofEnvironment -> (ProofEnvironment, FactId)
+newFactLabel :: ProofEnvironment -> (FactId, ProofEnvironment)
 newFactLabel env =
   let lbl = FactId (peCurFactNum env)
-   in (updateGenState (\gs -> gs { gsCurFactNum = gsCurFactNum gs + 1 }) env, lbl)
+   in (lbl, updateGenState (\gs -> gs { gsCurFactNum = gsCurFactNum gs + 1 }) env)
 
 -- Generate canonical signature for a disjunction
 canonicalDisjunctionSignature :: DisjunctionEntry -> String
@@ -52,13 +51,13 @@ disjLabelText :: (DisjId, Int) -> String
 disjLabelText (DisjId n, _) = "D" ++ show n
 
 -- Generate a new disjunction label (reuses existing if same key)
-newDisjunctionLabel :: ProofEnvironment -> DisjunctionEntry -> (ProofEnvironment, DisjId)
+newDisjunctionLabel :: ProofEnvironment -> DisjunctionEntry -> (DisjId, ProofEnvironment)
 newDisjunctionLabel env disj =
   let key = disjunctionKey disj
    in case Map.lookup key (peDisjLabels env) of
-        Just existingId -> (env, existingId)
+        Just existingId -> (existingId, env)
         Nothing ->
           let newId = DisjId (peCurDisjNum env)
               env' = updateGenState (\gs -> gs { gsCurDisjNum = gsCurDisjNum gs + 1 }) env
               env'' = updateFactDB (\db -> db { fdDisjLabels = Map.insert key newId (fdDisjLabels db) }) env'
-           in (env'', newId)
+           in (newId, env'')

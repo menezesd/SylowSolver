@@ -19,84 +19,95 @@ module Auto
 import Data.Foldable (toList)
 import Data.List (foldl')
 import Data.Sequence ((|>))
-import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 
 -- Local modules
 import Core
 import Env
-import Environment.Types (peFacts, peGoalAchieved)
 import EnvPrint (printRelevantFacts)
-import IncrementalMatching (findTriggeredMatches, matchFactsToTemplate)
+import IncrementalMatching (findTriggeredMatches, matchPremises)
 import ProofMonad (runProofM)
 import Environment.FactsMonadic (applyThmM)
+
+data SearchStatus
+  = GoalFound
+  | QueueExhausted
+  | IterationLimitReached
+  deriving (Eq, Show)
+
+data SearchState = SearchState
+  { ssEnv :: ProofEnvironment
+  , ssQueue :: Seq.Seq FactEntry
+  , ssProcessed :: Set.Set FactId
+  , ssIter :: Int
+  }
 
 matchFactsToTheorem :: [Fact] -> ProofEnvironment -> [FactEntry] -> [[FactEntry]]
 matchFactsToTheorem premises env newFacts =
   let newLabels = Set.fromList [feLabel f | f <- newFacts]
-      curMatches = [[]]
-      dicts = [Map.empty]
-      usesNewList = [False]
-      step (matches, dictList, usesList) template =
-        let expanded =
-              [ (m ++ [f], d', uses || Set.member (feLabel f) newLabels)
-              | (m, d, uses) <- zip3 matches dictList usesList
-              , (f, d') <- matchFactsToTemplate template env d
-              ]
-         in unzip3 expanded
-      (finalMatches, _, finalUses) =
-        foldl' step (curMatches, dicts, usesNewList) premises  -- Use strict foldl'
-   in [m | (m, usesNew) <- zip finalMatches finalUses, usesNew]
+   in [ match
+      | match <- matchPremises env premises
+      , any (\fe -> Set.member (feLabel fe) newLabels) match
+      ]
 
 autoSolve :: ProofEnvironment -> IO Bool
-autoSolve env0 = loop env0 (Seq.fromList (peFacts env0)) Set.empty (0 :: Int)
+autoSolve env0 = do
+  let initialState =
+        SearchState
+          { ssEnv = env0
+          , ssQueue = Seq.fromList (peFacts env0)
+          , ssProcessed = Set.empty
+          , ssIter = 0
+          }
+      (finalEnv, status) = runSearch initialState
+  mapM_ putStrLn (printRelevantFacts finalEnv)
+  putStrLn $ case status of
+    GoalFound -> "SUCCESS"
+    _ -> "FAILURE"
+  pure (status == GoalFound)
   where
+    runSearch :: SearchState -> (ProofEnvironment, SearchStatus)
+    runSearch st =
+      case stepSearch st of
+        Left status -> (ssEnv st, status)
+        Right st' -> runSearch st'
+
     maxIterations :: Int
     maxIterations = 1000
-    batchSize = 8  -- Process facts in small batches to reduce loop overhead
 
-    -- Agenda-based loop: process facts in batches from the work queue
-    loop env workQueue processedSet iter
-      | iter >= maxIterations = do
-          mapM_ putStrLn (printRelevantFacts env)
-          putStrLn "FAILURE"
-          pure False
-      | Seq.null workQueue = do
-          -- Queue exhausted: check if we achieved the goal
-          if peGoalAchieved env
-            then do
-              mapM_ putStrLn (printRelevantFacts env)
-              putStrLn "SUCCESS"
-              pure True
-            else do
-              mapM_ putStrLn (printRelevantFacts env)
-              putStrLn "FAILURE"
-              pure False
-      | peGoalAchieved env = do
-          -- Goal achieved: stop immediately
-          mapM_ putStrLn (printRelevantFacts env)
-          putStrLn "SUCCESS"
-          pure True
-      | otherwise = do
-          -- Extract a batch of facts to process
-          let (batch, restQueue) = Seq.splitAt batchSize workQueue
-              factsToProcess = [(fact, feLabel fact) | fact <- toList batch, Set.notMember (feLabel fact) processedSet]
+    batchSize :: Int
+    batchSize = 8
 
-          if null factsToProcess
-            then loop env restQueue processedSet iter  -- All facts in batch already processed
-            else do
-              -- Process all facts in the batch
-              let (env', newFactsAll, newProcessedIds) = processBatch env factsToProcess processedSet
-                  processedSet' = foldl' (flip Set.insert) processedSet newProcessedIds
-                  -- Add new facts to the work queue - O(k) amortized with Seq
-                  newQueue = foldl' (|>) restQueue newFactsAll
-
-              loop env' newQueue processedSet' (iter + 1)
+    stepSearch :: SearchState -> Either SearchStatus SearchState
+    stepSearch st
+      | peGoalAchieved env = Left GoalFound
+      | ssIter st >= maxIterations = Left IterationLimitReached
+      | Seq.null queue = Left QueueExhausted
+      | otherwise =
+          let (batch, restQueue) = Seq.splitAt batchSize queue
+              factsToProcess = [(fact, feLabel fact) | fact <- toList batch, Set.notMember (feLabel fact) processed]
+           in if null factsToProcess
+                then Right st { ssQueue = restQueue, ssIter = ssIter st + 1 }
+                else
+                  let (env', newFactsAll, newProcessedIds) = processBatch env factsToProcess
+                      processed' = foldl' (flip Set.insert) processed newProcessedIds
+                      newQueue = foldl' (|>) restQueue newFactsAll
+                   in Right
+                        SearchState
+                          { ssEnv = env'
+                          , ssQueue = newQueue
+                          , ssProcessed = processed'
+                          , ssIter = ssIter st + 1
+                          }
+      where
+        env = ssEnv st
+        queue = ssQueue st
+        processed = ssProcessed st
 
     -- Process a batch of facts
     -- Accumulates facts in reverse order, then reverses at the end
-    processBatch env factsToProcess _processedSet =
+    processBatch env factsToProcess =
       let (env', revNewFacts, revProcessedIds) =
             foldl' processOneFact (env, [], []) factsToProcess
        in (env', reverse revNewFacts, reverse revProcessedIds)

@@ -4,7 +4,6 @@ module Environment.Symbols
   ) where
 
 import Environment.Types
-import Environment.Types
 import qualified Data.Set as Set
 
 -- | Core symbol generation logic (pure).
@@ -21,13 +20,16 @@ nextSymbol curLetter curSuffix usedSymbols =
         else (sym, nextLetter, nextSuffix)
 
 -- | Generate a new unique symbol in the environment.
-generateNewSymbol :: ProofEnvironment -> (ProofEnvironment, String)
+generateNewSymbol :: ProofEnvironment -> (String, ProofEnvironment)
 generateNewSymbol env =
   let (sym, nextLetter, nextSuffix) =
         nextSymbol (peCurLetter env) (peCurSuffix env) (peSymbolSet env)
-      env' = updateGenState (\gs -> gs
-               { gsCurLetter = nextLetter
-               , gsCurSuffix = nextSuffix
-               , gsSymbolSet = Set.insert sym (gsSymbolSet gs)
-               }) env
-   in (env', sym)
+      env' = updateGenState
+               (\gs ->
+                 gs
+                   { gsCurLetter = nextLetter
+                   , gsCurSuffix = nextSuffix
+                   , gsSymbolSet = Set.insert sym (gsSymbolSet gs)
+                   })
+               env
+   in (sym, env')

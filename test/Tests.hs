@@ -320,5 +320,5 @@ genSymOnlyFact = do
 
 propSubstDeterministic :: Fact -> Bool
 propSubstDeterministic f =
-  let subst = Map.fromList [("X", "a"), ("Y", "b")]
+  let subst = Map.fromList [("X", Sym "a"), ("Y", Sym "b")]
    in applySubstToFact subst f == applySubstToFact subst f

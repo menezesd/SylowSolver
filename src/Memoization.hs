@@ -31,11 +31,23 @@ module Memoization
   , numSylowMemo
   , pKillableMemo
   , sylowKillableMemo
+  , divisorsMemoWith
+  , primeFactorsMemoWith
+  , primeFactorizationMemoWith
+  , isPrimeMemoWith
+  , numSylowMemoWith
+  , pKillableMemoWith
+  , sylowKillableMemoWith
 
   -- * Cache statistics (for benchmarking)
   , getCacheStats
   , resetCacheStats
+  , getCacheStatsWith
+  , resetCacheStatsWith
   , CacheStats(..)
+  , MemoStore(..)
+  , newMemoStore
+  , globalMemoStore
   ) where
 
 import qualified Data.IntMap.Strict as IntMap
@@ -50,35 +62,34 @@ data CacheStats = CacheStats
   , csCacheSize :: !Int
   } deriving (Show, Eq)
 
--- Global cache for divisors (using IntMap for efficiency)
--- SAFETY: NOINLINE ensures single initialization; see module header for full safety argument
-{-# NOINLINE divisorsCache #-}
-divisorsCache :: IORef (IntMap.IntMap [Int])
-divisorsCache = unsafePerformIO (newIORef IntMap.empty)
+data MemoStore = MemoStore
+  { msDivisors :: IORef (IntMap.IntMap [Int])
+  , msPrimeFactors :: IORef (IntMap.IntMap [Int])
+  , msPrimeFactorization :: IORef (IntMap.IntMap [(Int, Int)])
+  , msIsPrime :: IORef (IntMap.IntMap Bool)
+  , msStats :: IORef CacheStats
+  }
 
--- Global cache for prime factors
--- SAFETY: See module header for unsafePerformIO safety argument
-{-# NOINLINE primeFactorsCache #-}
-primeFactorsCache :: IORef (IntMap.IntMap [Int])
-primeFactorsCache = unsafePerformIO (newIORef IntMap.empty)
+newMemoStore :: IO MemoStore
+newMemoStore = do
+  divisorsCache <- newIORef IntMap.empty
+  primeFactorsCache <- newIORef IntMap.empty
+  primeFactorizationCache <- newIORef IntMap.empty
+  isPrimeCache <- newIORef IntMap.empty
+  statsRef <- newIORef (CacheStats 0 0 0)
+  pure MemoStore
+    { msDivisors = divisorsCache
+    , msPrimeFactors = primeFactorsCache
+    , msPrimeFactorization = primeFactorizationCache
+    , msIsPrime = isPrimeCache
+    , msStats = statsRef
+    }
 
--- Global cache for prime factorization
--- SAFETY: See module header for unsafePerformIO safety argument
-{-# NOINLINE primeFactorizationCache #-}
-primeFactorizationCache :: IORef (IntMap.IntMap [(Int, Int)])
-primeFactorizationCache = unsafePerformIO (newIORef IntMap.empty)
-
--- Global cache for isPrime
--- SAFETY: See module header for unsafePerformIO safety argument
-{-# NOINLINE isPrimeCache #-}
-isPrimeCache :: IORef (IntMap.IntMap Bool)
-isPrimeCache = unsafePerformIO (newIORef IntMap.empty)
-
--- Global cache statistics
--- SAFETY: See module header for unsafePerformIO safety argument
-{-# NOINLINE cacheStatsRef #-}
-cacheStatsRef :: IORef CacheStats
-cacheStatsRef = unsafePerformIO (newIORef (CacheStats 0 0 0))
+-- Backwards-compatible global store
+-- SAFETY: NOINLINE ensures single initialization; see module header for unsafePerformIO safety argument
+{-# NOINLINE globalMemoStore #-}
+globalMemoStore :: MemoStore
+globalMemoStore = unsafePerformIO newMemoStore
 
 -- | Memoize a pure function with Int keys using thread-safe global cache.
 -- SAFETY: unsafePerformIO is safe here because:
@@ -86,8 +97,8 @@ cacheStatsRef = unsafePerformIO (newIORef (CacheStats 0 0 0))
 --   - atomicModifyIORef' ensures thread-safe cache access
 --   - The result is the same whether cached or computed
 {-# INLINE memoizeInt #-}
-memoizeInt :: IORef (IntMap.IntMap b) -> (Int -> b) -> Int -> b
-memoizeInt cacheRef f x = unsafePerformIO $ do
+memoizeInt :: IORef (IntMap.IntMap b) -> IORef CacheStats -> (Int -> b) -> Int -> b
+memoizeInt cacheRef statsRef f x = unsafePerformIO $ do
   -- Atomic lookup-or-insert: check cache, compute if missing
   (result, isHit) <- atomicModifyIORef' cacheRef $ \cache ->
     case IntMap.lookup x cache of
@@ -96,7 +107,7 @@ memoizeInt cacheRef f x = unsafePerformIO $ do
         let !computed = f x
          in (IntMap.insert x computed cache, (computed, False))
   -- Update stats based on hit/miss
-  atomicModifyIORef' cacheStatsRef $ \s ->
+  atomicModifyIORef' statsRef $ \s ->
     if isHit
       then (s { csHits = csHits s + 1 }, ())
       else (s { csMisses = csMisses s + 1, csCacheSize = csCacheSize s + 1 }, ())
@@ -105,40 +116,67 @@ memoizeInt cacheRef f x = unsafePerformIO $ do
 -- Memoized versions of number theory functions
 
 divisorsMemo :: Int -> [Int]
-divisorsMemo = memoizeInt divisorsCache divisors
+divisorsMemo = divisorsMemoWith globalMemoStore
 
 primeFactorsMemo :: Int -> [Int]
-primeFactorsMemo = memoizeInt primeFactorsCache primeFactors
+primeFactorsMemo = primeFactorsMemoWith globalMemoStore
 
 primeFactorizationMemo :: Int -> [(Int, Int)]
-primeFactorizationMemo = memoizeInt primeFactorizationCache primeFactorization
+primeFactorizationMemo = primeFactorizationMemoWith globalMemoStore
 
 isPrimeMemo :: Int -> Bool
-isPrimeMemo = memoizeInt isPrimeCache isPrime
+isPrimeMemo = isPrimeMemoWith globalMemoStore
+
+divisorsMemoWith :: MemoStore -> Int -> [Int]
+divisorsMemoWith store = memoizeInt (msDivisors store) (msStats store) divisors
+
+primeFactorsMemoWith :: MemoStore -> Int -> [Int]
+primeFactorsMemoWith store = memoizeInt (msPrimeFactors store) (msStats store) primeFactors
+
+primeFactorizationMemoWith :: MemoStore -> Int -> [(Int, Int)]
+primeFactorizationMemoWith store = memoizeInt (msPrimeFactorization store) (msStats store) primeFactorization
+
+isPrimeMemoWith :: MemoStore -> Int -> Bool
+isPrimeMemoWith store = memoizeInt (msIsPrime store) (msStats store) isPrime
 
 -- Derived memoized functions that use the cached primitives
 
 numSylowMemo :: Int -> Int -> [Int]
-numSylowMemo p n = [d | d <- divisorsMemo n, d `mod` p == 1]
+numSylowMemo = numSylowMemoWith globalMemoStore
 
 pKillableMemo :: Int -> Int -> Bool
-pKillableMemo p n = all (\d -> d == 1 || d `mod` p /= 1) (divisorsMemo n)
+pKillableMemo = pKillableMemoWith globalMemoStore
 
 sylowKillableMemo :: Int -> Bool
-sylowKillableMemo 1 = True
-sylowKillableMemo n =
-  let ps = reverse (primeFactorsMemo n)
-   in any (\p -> pKillableMemo p n) ps
+sylowKillableMemo = sylowKillableMemoWith globalMemoStore
+
+numSylowMemoWith :: MemoStore -> Int -> Int -> [Int]
+numSylowMemoWith store p n = [d | d <- divisorsMemoWith store n, d `mod` p == 1]
+
+pKillableMemoWith :: MemoStore -> Int -> Int -> Bool
+pKillableMemoWith store p n = all (\d -> d == 1 || d `mod` p /= 1) (divisorsMemoWith store n)
+
+sylowKillableMemoWith :: MemoStore -> Int -> Bool
+sylowKillableMemoWith _ 1 = True
+sylowKillableMemoWith store n =
+  let ps = reverse (primeFactorsMemoWith store n)
+   in any (\p -> pKillableMemoWith store p n) ps
 
 -- Cache statistics functions
 
 getCacheStats :: IO CacheStats
-getCacheStats = readIORef cacheStatsRef
+getCacheStats = getCacheStatsWith globalMemoStore
 
 resetCacheStats :: IO ()
-resetCacheStats = do
-  writeIORef divisorsCache IntMap.empty
-  writeIORef primeFactorsCache IntMap.empty
-  writeIORef primeFactorizationCache IntMap.empty
-  writeIORef isPrimeCache IntMap.empty
-  writeIORef cacheStatsRef (CacheStats 0 0 0)
+resetCacheStats = resetCacheStatsWith globalMemoStore
+
+getCacheStatsWith :: MemoStore -> IO CacheStats
+getCacheStatsWith store = readIORef (msStats store)
+
+resetCacheStatsWith :: MemoStore -> IO ()
+resetCacheStatsWith store = do
+  writeIORef (msDivisors store) IntMap.empty
+  writeIORef (msPrimeFactors store) IntMap.empty
+  writeIORef (msPrimeFactorization store) IntMap.empty
+  writeIORef (msIsPrime store) IntMap.empty
+  writeIORef (msStats store) (CacheStats 0 0 0)
