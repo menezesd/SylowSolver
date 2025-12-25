@@ -9,7 +9,8 @@ import Auto (prove)
 import Core
 import Env
 import Environment.Types
-import Environment.Facts (addNewFacts)
+import Environment.FactsMonadic (addNewFactsM)
+import ProofMonad (execProofM)
 import Predicates (group, order)
 import Theorems
 import Unification
@@ -26,21 +27,21 @@ benchEnvCreation = bgroup "Environment Creation"
     addOneFact () =
       let env = initEnv [] allTheorems Map.empty (group (sym "G"))
           facts = [NewConclusion (CFact (order (sym "G") (sym "6"))) [] Set.empty Nothing]
-      in addNewFacts env facts
+      in execProofM (addNewFactsM facts) env
 
     addTenFacts () =
       let env = initEnv [] allTheorems Map.empty (group (sym "G"))
           facts = [ NewConclusion (CFact (Fact ("pred" ++ show i) [sym "x"])) [] Set.empty Nothing
                   | i <- [1..10 :: Int]
                   ]
-      in addNewFacts env facts
+      in execProofM (addNewFactsM facts) env
 
     addHundredFacts () =
       let env = initEnv [] allTheorems Map.empty (group (sym "G"))
           facts = [ NewConclusion (CFact (Fact ("pred" ++ show i) [sym "x"])) [] Set.empty Nothing
                   | i <- [1..100 :: Int]
                   ]
-      in addNewFacts env facts
+      in execProofM (addNewFactsM facts) env
 
 -- Benchmark: Unification
 benchUnification :: Benchmark
@@ -77,7 +78,7 @@ benchTheoremMatching = bgroup "Theorem Matching"
   where
     matchSimple () =
       let env = initEnv [] allTheorems Map.empty (group (sym "G"))
-          (env', _) = addNewFacts env [NewConclusion (CFact (order (sym "G") (sym "6"))) [] Set.empty Nothing]
+          env' = execProofM (addNewFactsM [NewConclusion (CFact (order (sym "G") (sym "6"))) [] Set.empty Nothing]) env
       in length (peFacts env')
 
     matchComplex () =
@@ -85,7 +86,7 @@ benchTheoremMatching = bgroup "Theorem Matching"
           facts = [ NewConclusion (CFact (order (sym "G") (sym "6"))) [] Set.empty Nothing
                   , NewConclusion (CFact (group (sym "G"))) [] Set.empty Nothing
                   ]
-          (env', _) = addNewFacts env facts
+          env' = execProofM (addNewFactsM facts) env
       in length (peFacts env')
 
 -- Benchmark: Small proof searches

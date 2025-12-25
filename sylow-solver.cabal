@@ -22,12 +22,10 @@ common common-deps
 library
   import:              common-deps
   hs-source-dirs:      src
-  exposed-modules:     ArgUtils
-                     , Auto
+  exposed-modules:     Auto
                      , Core
                      , Env
                      , Environment.Accessors
-                     , Environment.Facts
                      , Environment.FactsMonadic
                      , Environment.Goals
                      , Environment.Labels

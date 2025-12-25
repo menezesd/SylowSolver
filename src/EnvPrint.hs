@@ -15,12 +15,7 @@ showProofTrace = concatMap showStep
   where
     showStep step
       | psUseful step =
-          [ ( labelText (psLabel step)
-                ++ " : "
-                ++ factName (psFact step)
-                ++ " "
-                ++ show (map argText (factArgs (psFact step)))
-            )
+          [ show step
           , case psConcThm step of
               Just thmName' ->
                 ( "    by thm "

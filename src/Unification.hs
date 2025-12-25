@@ -18,21 +18,23 @@ module Unification
   , unifyArg
   , applySubstToFact
   , applySubstToArg
+  , applyStdThm
   ) where
 
 import Core
+import Environment.Types
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 -- Type alias for substitutions
-type Substitution = Map String String
+type Substitution = Map String Arg
 
 -- Unification errors
 data UnificationError
   = NameMismatch String String
   | ArityMismatch Int Int
   | ExactMismatch String String
-  | ConflictingBinding String String String
+  | ConflictingBinding String Arg Arg -- Changed to Arg Arg
   deriving (Eq, Show)
 
 -- Unify a single fact with another fact
@@ -67,53 +69,45 @@ unifyArg subst tArg fArg =
     -- Exact matches: structural comparison
     (Exact n1, Exact n2) | n1 == n2 -> Right subst
     (Exact n1, Sym n2) | n1 == n2 -> Right subst
-    (Exact n, Num i) ->
-      -- Only stringify when needed for error message
-      let nText = argText (Num i)
-       in if n == nText then Right subst
-          else Left (ExactMismatch n nText)
+    (Exact n, Num i) | n == show i -> Right subst
     (Exact n, _) -> Left (ExactMismatch n (argText fArg))
 
     -- Sym matches: structural comparison
     (Sym n1, Sym n2) | n1 == n2 -> Right subst
     (Sym n1, Exact n2) | n1 == n2 -> Right subst
-    (Sym n, Num i) ->
-      let nText = argText (Num i)
-       in if n == nText then Right subst
-          else Left (ExactMismatch n nText)
+    (Sym n, Num i) | n == show i -> Right subst
     (Sym n, _) -> Left (ExactMismatch n (argText fArg))
 
     -- Num matches: structural comparison
     (Num i1, Num i2) | i1 == i2 -> Right subst
-    (Num i, Sym n) ->
-      let iText = argText (Num i)
-       in if iText == n then Right subst
-          else Left (ExactMismatch iText n)
-    (Num i, Exact n) ->
-      let iText = argText (Num i)
-       in if iText == n then Right subst
-          else Left (ExactMismatch iText n)
-    (Num i, _) -> Left (ExactMismatch (argText (Num i)) (argText fArg))
+    (Num i, Sym n) | show i == n -> Right subst
+    (Num i, Exact n) | show i == n -> Right subst
+    (Num i, _) -> Left (ExactMismatch (show i) (argText fArg))
 
     -- Var: binds to anything (need string representation for substitution)
     (Var name, _) ->
       case Map.lookup name subst of
-        Nothing -> Right (Map.insert name (argText fArg) subst)
+        Nothing -> Right (Map.insert name fArg subst)
         Just v ->
-          let fText = argText fArg
-           in if v == fText
+          if v == fArg
                 then Right subst
-                else Left (ConflictingBinding name v fText)
+                else Left (ConflictingBinding name v fArg)
 
     -- Fresh: binds to anything (need string representation for substitution)
     (Fresh name, _) ->
       case Map.lookup name subst of
-        Nothing -> Right (Map.insert name (argText fArg) subst)
+        Nothing -> Right (Map.insert name fArg subst)
         Just v ->
-          let fText = argText fArg
-           in if v == fText
+          if v == fArg
                 then Right subst
-                else Left (ConflictingBinding name v fText)
+                else Left (ConflictingBinding name v fArg)
+
+-- Apply standard theorem via unification
+applyStdThm :: Theorem -> [FactEntry] -> [Fact]
+applyStdThm thm facts =
+  case unifyFacts Map.empty (theoremFacts thm) (map feFact facts) of
+    Left _ -> []
+    Right mapping -> map (applySubstToFact mapping) (theoremConcs thm)
 
 -- Apply substitution to a fact
 {-# INLINE applySubstToFact #-}
@@ -128,16 +122,16 @@ applySubstToArg subst arg =
   case arg of
     Var name ->
       case Map.lookup name subst of
-        Just symName -> Sym symName
+        Just boundArg -> boundArg
         Nothing -> arg
     Exact name ->
       case Map.lookup name subst of
-        Just symName -> Sym symName
-        Nothing -> Sym name
+        Just boundArg -> boundArg
+        Nothing -> Exact name -- If not bound, it remains an Exact
     Fresh name ->
       case Map.lookup name subst of
-        Just symName -> Sym symName
+        Just boundArg -> boundArg
         Nothing -> arg
     Sym _ -> arg
-    Num _ -> arg  -- Numeric arguments are not substituted
+    Num _ -> arg
 

@@ -21,7 +21,7 @@ module Env
   -- Re-export accessors
   , module Environment.Accessors
   -- Re-export from sub-modules
-  , module Environment.Facts
+
   , module Environment.Goals
   , module Environment.Labels
   , module Environment.Symbols
@@ -35,7 +35,9 @@ import qualified Data.Set as Set
 -- Local modules
 import Core
 import Environment.Accessors
-import Environment.Facts
+import Environment.FactsMonadic (addNewFactsM)
+import ProofMonad (execProofM)
+
 import Environment.Goals
 import Environment.Labels
 import Environment.Symbols
@@ -95,7 +97,7 @@ initEnv facts theorems thmDict goal =
       initialConcs =
         [ NewConclusion (CFact f) [] Set.empty Nothing | f <- facts
         ]
-      (envWithFacts, _) = addNewFacts base initialConcs
+      envWithFacts = execProofM (addNewFactsM initialConcs) base
       initialSymbols =
         Set.fromList
           [ argText arg | Fact _ args <- facts, arg <- args ]

@@ -28,6 +28,8 @@ import Core
 import Env
 import EnvPrint (printRelevantFacts)
 import IncrementalMatching (findTriggeredMatches, matchFactsToTemplate)
+import ProofMonad (runProofM)
+import Environment.FactsMonadic (applyThmM)
 
 matchFactsToTheorem :: [Fact] -> ProofEnvironment -> [FactEntry] -> [[FactEntry]]
 matchFactsToTheorem premises env newFacts =
@@ -111,7 +113,7 @@ autoSolve env0 = loop env0 (Seq.fromList (peFacts env0)) Set.empty (0 :: Int)
        in (env', reverse revFacts)
       where
         applyOne (!envAcc, !newFactsAccRev) (thm, match) =
-          let (env', newFacts) = applyThm envAcc thm match
+          let (newFacts, env') = runProofM (applyThmM thm match) envAcc
            in (env', reverseOnto newFacts newFactsAccRev)
 
     -- Helper: reverse xs onto ys (like reverse xs ++ ys but O(n) not O(2n))

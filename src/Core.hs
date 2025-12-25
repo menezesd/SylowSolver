@@ -23,7 +23,23 @@ module Core
   , Conclusion(..)
   , thmName
   , thmFacts
+  , ppArg
+  , ppFact
+  , argAtom
   ) where
+
+import Data.List (intercalate)
+
+-- Pretty-printing functions for Arg and Fact
+ppArg :: Arg -> String
+ppArg (Sym s) = s
+ppArg (Var s) = "?" ++ s
+ppArg (Exact s) = "'" ++ s ++ "'"
+ppArg (Fresh s) = "_" ++ s
+ppArg (Num n) = show n
+
+ppFact :: Fact -> String
+ppFact (Fact n args) = n ++ "(" ++ intercalate ", " (map ppArg args) ++ ")"
 
 newtype FactId = FactId Int deriving stock (Eq, Ord, Show)
 newtype DisjId = DisjId Int deriving stock (Eq, Ord, Show)
@@ -70,6 +86,11 @@ argText arg =
 argInt :: Arg -> Maybe Int
 argInt (Num n) = Just n
 argInt _ = Nothing
+
+-- Distinguish between numeric and string arguments
+argAtom :: Arg -> Either Int String
+argAtom (Num n) = Left n
+argAtom a = Right (argText a)
 
 -- FactKey: A key for indexing facts by name and arity
 -- Replaces the repeated (String, Int) tuple pattern

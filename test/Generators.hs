@@ -31,7 +31,7 @@ instance Arbitrary Arg where
 instance Arbitrary Fact where
   arbitrary = do
     name <- genIdentifier
-    numArgs <- choose (1, 5)  -- Facts have 1-5 arguments
+    numArgs <- choose (0, 5)  -- Facts have 0-5 arguments
     args <- vectorOf numArgs arbitrary
     return (Fact name args)
 
@@ -134,3 +134,28 @@ genInconsistentVarPattern = do
       concrete = Fact name [Sym sym1, Sym sym2]
 
   return (template, concrete)
+
+-- Generator for facts designed to frequently satisfy transitivity conditions
+genTransitiveFacts :: Gen (Fact, Fact, Fact)
+genTransitiveFacts = do
+  f_base <- arbitrary
+
+  -- f1 is either f_base or an arbitrary fact
+  f1 <- frequency
+    [ (7, pure f_base)
+    , (3, arbitrary)
+    ]
+
+  -- f2 is either f1 or an arbitrary fact
+  f2 <- frequency
+    [ (7, pure f1)
+    , (3, arbitrary)
+    ]
+
+  -- f3 is either f2 or an arbitrary fact
+  f3 <- frequency
+    [ (7, pure f2)
+    , (3, arbitrary)
+    ]
+
+  pure (f1, f2, f3)

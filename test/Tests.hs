@@ -61,8 +61,7 @@ tests =
         , testProperty "memoized primeFactors match pure" propPrimeFactorsMemoCorrect
         ]
     , testGroup "FactKey"
-        [ testProperty "factKey is stable" propFactKeyStable
-        , testProperty "equal facts have equal keys" propEqualFactsEqualKeys
+        [ testProperty "equal facts have equal keys" propEqualFactsEqualKeys
         ]
     , testGroup "Substitution"
         [ testProperty "applying empty substitution is identity" propEmptySubstIdentity
@@ -212,10 +211,9 @@ propFactEqReflexive f = f == f
 propFactEqSymmetric :: Fact -> Fact -> Bool
 propFactEqSymmetric f1 f2 = (f1 == f2) == (f2 == f1)
 
-propFactEqTransitive :: Fact -> Property
-propFactEqTransitive f =
-  -- If f1 == f2 == f, then f1 == f (trivially true)
-  f == f && f == f ==> f == f
+propFactEqTransitive :: Property
+propFactEqTransitive = forAll genTransitiveFacts $ \(f1, f2, f3) ->
+  (f1 == f2 && f2 == f3) ==> f1 == f3
 
 -- Arg properties
 

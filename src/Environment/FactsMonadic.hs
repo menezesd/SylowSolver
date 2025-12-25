@@ -12,7 +12,7 @@ import Environment.Accessors
 import Environment.Goals (updateGoalAchieved, updateUseful)
 import Environment.Variables
 import ProofMonad
-import Unification
+import Unification (applyStdThm)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -117,9 +117,4 @@ applyThmM thm facts = do
       putEnv env'
       addNewFactsM nc'
 
--- Apply standard theorem via unification
-applyStdThm :: Theorem -> [FactEntry] -> [Fact]
-applyStdThm thm facts =
-  case unifyFacts Map.empty (theoremFacts thm) (map feFact facts) of
-    Left _ -> []
-    Right mapping -> map (applySubstToFact mapping) (theoremConcs thm)
+

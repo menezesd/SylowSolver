@@ -19,7 +19,7 @@ import qualified Data.Set as Set
 -- ProofStep now wraps FactEntry directly instead of reconstructing fields
 data ProofStep = ProofStep
   { psFactEntry :: FactEntry
-  } deriving (Eq, Show)
+  } deriving (Eq)
 
 -- Accessor functions for backward compatibility
 psLabel :: ProofStep -> Label
@@ -55,3 +55,7 @@ labelText lbl =
   case lbl of
     LFact (FactId n) -> "F" ++ show n
     LDisj (DisjId n) -> "D" ++ show n
+
+instance Show ProofStep where
+  show (ProofStep fe) =
+    labelText (LFact (feLabel fe)) ++ " : " ++ ppFact (feFact fe)
