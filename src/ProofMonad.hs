@@ -26,7 +26,7 @@ import qualified Data.Set as Set
 
 -- Local modules
 import Core
-import Environment.Accessors
+import Environment.Types
 import Environment.Labels (disjunctionKey)
 import Environment.Symbols (nextSymbol)
 import Environment.Types

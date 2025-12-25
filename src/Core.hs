@@ -122,7 +122,7 @@ data Theorem = Theorem
 data HyperTheorem = HyperTheorem
   { hyperName :: String
   , hyperFacts :: [Fact]
-  , hyperRule :: [Fact] -> [Conclusion]
+  , hyperRule :: [Fact] -> Maybe [Conclusion]
   }
 
 -- Manual Show instance since hyperRule is a function

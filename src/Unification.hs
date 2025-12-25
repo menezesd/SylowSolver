@@ -33,7 +33,7 @@ type Substitution = Map String Arg
 data UnificationError
   = NameMismatch String String
   | ArityMismatch Int Int
-  | ExactMismatch String String
+  | ExactMismatch Arg Arg -- Changed from String String
   | ConflictingBinding String Arg Arg -- Changed to Arg Arg
   deriving (Eq, Show)
 
@@ -70,19 +70,19 @@ unifyArg subst tArg fArg =
     (Exact n1, Exact n2) | n1 == n2 -> Right subst
     (Exact n1, Sym n2) | n1 == n2 -> Right subst
     (Exact n, Num i) | n == show i -> Right subst
-    (Exact n, _) -> Left (ExactMismatch n (argText fArg))
+    (Exact n, _) -> Left (ExactMismatch tArg fArg)
 
     -- Sym matches: structural comparison
     (Sym n1, Sym n2) | n1 == n2 -> Right subst
     (Sym n1, Exact n2) | n1 == n2 -> Right subst
     (Sym n, Num i) | n == show i -> Right subst
-    (Sym n, _) -> Left (ExactMismatch n (argText fArg))
+    (Sym n, _) -> Left (ExactMismatch tArg fArg)
 
     -- Num matches: structural comparison
     (Num i1, Num i2) | i1 == i2 -> Right subst
     (Num i, Sym n) | show i == n -> Right subst
     (Num i, Exact n) | show i == n -> Right subst
-    (Num i, _) -> Left (ExactMismatch (show i) (argText fArg))
+    (Num i, _) -> Left (ExactMismatch tArg fArg)
 
     -- Var: binds to anything (need string representation for substitution)
     (Var name, _) ->

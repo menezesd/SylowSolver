@@ -6,9 +6,10 @@ module Environment.FactsMonadic
   ) where
 
 import Control.Monad (when)
+import Data.Maybe (fromMaybe)
 import Core
 import Environment.Types
-import Environment.Accessors
+import Environment.Types
 import Environment.Goals (updateGoalAchieved, updateUseful)
 import Environment.Variables
 import ProofMonad
@@ -105,7 +106,7 @@ applyThmM thm facts = do
       -- Generate conclusions
       let concs = case thm of
             Std t -> map CFact (applyStdThm t facts)
-            Hyper t -> hyperRule t (map feFact facts)
+            Hyper t -> fromMaybe [] (hyperRule t (map feFact facts))
           deps = map (LFact . feLabel) facts
           nc = [ NewConclusion c deps usedAnc (Just (thmName thm))
                | c <- concs

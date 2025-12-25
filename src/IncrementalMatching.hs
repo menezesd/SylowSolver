@@ -22,6 +22,7 @@ import Control.Monad (foldM)
 import Environment.Types (TriggerIndex)
 import qualified Data.Map.Strict as Map
 import Env
+import Environment.Types (peFactIndex)
 import Unification
 
 -- For a new fact, find all theorems that could be triggered

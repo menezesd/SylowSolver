@@ -8,7 +8,7 @@ module Environment.Labels
 
 import Core
 import Environment.Types
-import Environment.Accessors
+import Environment.Types
 import Data.List (sort, sortOn, intercalate)
 import Data.Maybe (maybeToList)
 import qualified Data.Map.Strict as Map

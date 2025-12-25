@@ -4,7 +4,7 @@ module Environment.Symbols
   ) where
 
 import Environment.Types
-import Environment.Accessors
+import Environment.Types
 import qualified Data.Set as Set
 
 -- | Core symbol generation logic (pure).

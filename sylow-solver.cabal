@@ -25,8 +25,7 @@ library
   exposed-modules:     Auto
                      , Core
                      , Env
-                     , Environment.Accessors
-                     , Environment.FactsMonadic
+                     , Environment.Init                     , Environment.FactsMonadic
                      , Environment.Goals
                      , Environment.Labels
                      , Environment.Lenses

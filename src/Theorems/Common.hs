@@ -60,7 +60,7 @@ fromMaybeList = fromMaybe []
 
 -- | Create a HyperTheorem (dynamic rule)
 {-# INLINE hyper #-}
-hyper :: String -> [Fact] -> ([Fact] -> [Conclusion]) -> Thm
+hyper :: String -> [Fact] -> ([Fact] -> Maybe [Conclusion]) -> Thm
 hyper name premises rule = Hyper (HyperTheorem name premises rule)
 
 -- | Create a standard Theorem (static rewrite rule)

@@ -13,6 +13,7 @@ module ProofTrace
 
 import Core
 import Env
+import Environment.Types (peOrderedFacts, peFactLabels)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 

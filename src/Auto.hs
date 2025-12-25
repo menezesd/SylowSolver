@@ -26,6 +26,7 @@ import qualified Data.Set as Set
 -- Local modules
 import Core
 import Env
+import Environment.Types (peFacts, peGoalAchieved)
 import EnvPrint (printRelevantFacts)
 import IncrementalMatching (findTriggeredMatches, matchFactsToTemplate)
 import ProofMonad (runProofM)

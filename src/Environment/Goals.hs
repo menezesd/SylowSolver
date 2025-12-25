@@ -5,7 +5,7 @@ module Environment.Goals
 
 import Core
 import Environment.Types
-import Environment.Accessors
+import Environment.Types
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 

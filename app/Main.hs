@@ -2,7 +2,7 @@ module Main where
 
 import Auto
 import Core
-import Env
+import Environment.Init (initEnv)
 import Predicates
 import System.Environment (getArgs)
 import System.IO (hFlush, stdout)
