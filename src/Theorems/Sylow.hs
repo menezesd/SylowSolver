@@ -13,33 +13,37 @@ module Theorems.Sylow
   ) where
 
 import Core
+import ConclusionDSL
 import Data.List (foldl')
-import NumberTheory
+import NumberTheory (maxPDivisor)
+import Memoization (numSylowMemo, primeFactorsMemo)
 import Predicates
-import Theorems.Common
+import Theorems.Common (arg2, arg3)
 
 ruleSylow :: [Fact] -> [Conclusion]
 ruleSylow [factGroup, factOrder] =
   case (factArgs factGroup, arg2 factOrder) of
     ([gArg], Just (_gArg2, nArg)) ->
-      let groupName = argText gArg
-          groupOrder = readInt (argText nArg)
-          buildForP p =
-            let pk = p ^ maxPDivisor groupOrder p
-                base =
-                  [ CFact (sylowPOrder (sym groupName) (sym (show p)) (sym (show pk)))
-                  , CFact (sylowPSubgroup (fresh (show p)) (sym (show p)) (sym groupName))
-                  , CFact (order (fresh (show p)) (sym (show pk)))
-                  ]
-                nps = numSylow p groupOrder
-                disFacts =
-                  [ numSylowFact (sym (show p)) (sym groupName) (sym (show n))
-                  | n <- nps
-                  ]
-             in if length disFacts == 1
-                  then base ++ map CFact disFacts
-                  else base ++ [CDisj (Disjunction disFacts)]
-       in concatMap buildForP (primeFactors groupOrder)
+      case nArg of
+        Num groupOrder ->
+          let groupName = argText gArg
+              buildForP p =
+                let pk = p ^ maxPDivisor groupOrder p
+                    base = facts
+                      [ sylowPOrder (sym groupName) (num p) (num pk)
+                      , sylowPSubgroup (fresh (show p)) (num p) (sym groupName)
+                      , order (fresh (show p)) (num pk)
+                      ]
+                    nps = numSylowMemo p groupOrder
+                    disFacts =
+                      [ numSylowFact (num p) (sym groupName) (num n)
+                      | n <- nps
+                      ]
+                 in if length disFacts == 1
+                      then base ++ facts disFacts
+                      else base ++ [disj disFacts]
+           in concatMap buildForP (primeFactorsMemo groupOrder)
+        _ -> [] -- Not a Num arg
     _ -> []
 ruleSylow _ = []
 
@@ -56,11 +60,12 @@ ruleSingleSylowNotSimple :: [Fact] -> [Conclusion]
 ruleSingleSylowNotSimple [factSylow, _factNum, factOrder] =
   case (arg3 factSylow, arg2 factOrder) of
     (Just (_hArg, pArg, gArg), Just (_gArg2, nArg)) ->
-      let g = argText gArg
-          p = readInt (argText pArg)
-          n0 = readInt (argText nArg)
-          pPower = isPowerOfP n0 p
-       in if n0 == 0 || pPower then [] else [CFact (notSimple (sym g))]
+      case (pArg, nArg) of
+        (Num p, Num n0) ->
+          let g = argText gArg
+              pPower = isPowerOfP n0 p
+           in if n0 == 0 || pPower then [] else [CFact (notSimple (sym g))]
+        _ -> [] -- Not Num args
     _ -> []
   where
     isPowerOfP n p'
@@ -91,14 +96,16 @@ ruleEmbedInAn :: [Fact] -> [Conclusion]
 ruleEmbedInAn [factNum, _factSimple] =
   case arg3 factNum of
     Just (_pArg, gArg, nPArg) ->
-      let nP = readInt (argText nPArg)
-          g = argText gArg
-       in if nP > 1
-            then
-              [ CFact (subgroup (sym g) (fresh "alt"))
-              , CFact (alternatingGroup (fresh "alt") (sym (show nP)))
-              ]
-            else []
+      case nPArg of
+        Num nP ->
+          let g = argText gArg
+           in if nP > 1
+                then
+                  [ CFact (subgroup (sym g) (fresh "alt"))
+                  , CFact (alternatingGroup (fresh "alt") (num nP))
+                  ]
+                else []
+        _ -> [] -- Not a Num arg
     _ -> []
 ruleEmbedInAn _ = []
 
@@ -115,14 +122,16 @@ ruleAlternatingOrder :: [Fact] -> [Conclusion]
 ruleAlternatingOrder [factAlt] =
   case arg2 factAlt of
     Just (aArg, nArg) ->
-      let a = argText aArg
-          n = readInt (argText nArg)
-          factorial m = foldl' (*) 1 [1 .. fromIntegral m]
-          orderVal
-            | n > 1000 = 0
-            | n == 1 = 1
-            | otherwise = fromIntegral (factorial n `div` 2)
-       in if n > 1000 then [] else [CFact (order (sym a) (sym (show orderVal)))]
+      case nArg of
+        Num n ->
+          let a = argText aArg
+              factorial' :: Integer -> Integer
+              factorial' m = foldl' (*) 1 [1 .. m]
+              orderVal
+                | n == 1 = 1
+                | otherwise = factorial' (fromIntegral n) `div` 2
+           in [CFact (order (sym a) (num (fromInteger orderVal)))]
+        _ -> [] -- Not a Num arg
     _ -> []
 ruleAlternatingOrder _ = []
 
@@ -148,9 +157,10 @@ ruleDividesContradiction :: [Fact] -> [Conclusion]
 ruleDividesContradiction [factDiv] =
   case arg2 factDiv of
     Just (mArg, nArg) ->
-      let m = readInt (argText mArg)
-          n = readInt (argText nArg)
-       in if n `mod` m /= 0 then [CFact falseFact] else []
+      case (mArg, nArg) of
+        (Num m, Num n) ->
+          if n `mod` m /= 0 then [CFact falseFact] else []
+        _ -> [] -- Not Num args
     _ -> []
 ruleDividesContradiction _ = []
 
@@ -167,9 +177,11 @@ ruleAlternatingSimple :: [Fact] -> [Conclusion]
 ruleAlternatingSimple [factAlt] =
   case arg2 factAlt of
     Just (aArg, nArg) ->
-      let n = readInt (argText nArg)
-          a = argText aArg
-       in if n >= 5 then [CFact (simple (sym a))] else []
+      case nArg of
+        Num n ->
+          let a = argText aArg
+           in if n >= 5 then [CFact (simple (sym a))] else []
+        _ -> [] -- Not a Num arg
     _ -> []
 ruleAlternatingSimple _ = []
 
@@ -186,13 +198,14 @@ ruleSubgroupIndex :: [Fact] -> [Conclusion]
 ruleSubgroupIndex [factSub, factH, factG] =
   case (arg2 factSub, arg2 factH, arg2 factG) of
     (Just (hArg, gArg), Just (_hArg2, mArg), Just (_gArg2, nArg)) ->
-      let m = readInt (argText mArg)
-          n = readInt (argText nArg)
-          h = argText hArg
-          g = argText gArg
-       in if m /= 0 && n `mod` m == 0
-            then [CFact (index (sym g) (sym h) (sym (show (n `div` m))))]
-            else []
+      case (mArg, nArg) of
+        (Num m, Num n) ->
+          let h = argText hArg
+              g = argText gArg
+           in if m /= 0 && n `mod` m == 0
+                then [CFact (index (sym g) (sym h) (num (n `div` m)))]
+                else []
+        _ -> [] -- Not Num args
     _ -> []
 ruleSubgroupIndex _ = []
 
@@ -214,14 +227,16 @@ ruleSimpleGroupAction :: [Fact] -> [Conclusion]
 ruleSimpleGroupAction [factAction, _factSimple] =
   case arg2 factAction of
     Just (gArg, nArg) ->
-      let n = readInt (argText nArg)
-          g = argText gArg
-       in if n > 1
-            then
-              [ CFact (subgroup (sym g) (fresh "alt"))
-              , CFact (alternatingGroup (fresh "alt") (sym (show n)))
-              ]
-            else []
+      case nArg of
+        Num n ->
+          let g = argText gArg
+           in if n > 1
+                then
+                  [ CFact (subgroup (sym g) (fresh "alt"))
+                  , CFact (alternatingGroup (fresh "alt") (num n))
+                  ]
+                else []
+        _ -> [] -- Not a Num arg
     _ -> []
 ruleSimpleGroupAction _ = []
 

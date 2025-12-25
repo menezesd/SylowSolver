@@ -1,67 +1,82 @@
 import itertools
 import math
 import sylow2
+from dataclasses import dataclass, field
+from typing import List, Set, Tuple, Optional, Dict, Any
+
+# Constants
+MAX_ITERATIONS = 1000
+BATCH_SIZE = 8
+DEFAULT_LABEL = "F0"
 
 
+@dataclass
 class Fact:
+    """
+    Represents a logical fact in the proof system.
 
-    # depth is the number of nested cases in which the fact has been shown
-    def __init__(self, name, args, dependencies=None, label=None, dis_ancestors=None):
-        dependencies = [] if dependencies is None else dependencies
-        dis_ancestors = [] if dis_ancestors is None else dis_ancestors
-        self.name = name
-        self.args = args
-        self.dependencies = (
-            dependencies  # the facts needed to conclude this fact, list of fact labels
+    A fact is a predicate with arguments, e.g., "group(G)" or "order(G, 12)".
+    Facts can be derived from other facts using theorems.
+
+    Attributes:
+        name: The predicate name (e.g., "group", "order")
+        args: List of arguments to the predicate
+        dependencies: Labels of facts needed to conclude this fact
+        label: Unique identifier for this fact
+        dis_ancestors: Set of (DisjunctionLabel, index) pairs from ancestry
+        conc_thm: The theorem used to conclude this fact, if any
+        useful: Whether this fact was used to conclude the goal
+    """
+    name: str
+    args: List[Any]
+    dependencies: List[str] = field(default_factory=list)
+    label: Optional[str] = None
+    dis_ancestors: Set[Tuple[str, int]] = field(default_factory=set)
+    conc_thm: Optional[Any] = None  # Type is Theorem but avoid circular import
+    useful: bool = False
+
+    def __str__(self) -> str:
+        """Detailed string representation for debugging."""
+        return (
+            f"{self.label} : {self.name} {self.args} :: "
+            f"{self.dependencies} :: {self.dis_ancestors}"
         )
 
-        self.useful = False  # was this fact used to conclude the goal
-
-        self.dis_ancestors = (
-            set()
-        )  # set of disjunction facts needed to conclude this fact (anywhere in ancestry)
-        # each entry is of the form (Disjunction_label, disjunction_index)
-
-        self.conc_thm = None  # the theorem that was used to conclude this Fact
-        self.label = label
-
-    def do_print(self):
-        print(
-            self.label,
-            " : ",
-            self.name,
-            " ",
-            self.args,
-            " :: ",
-            self.dependencies,
-            " :: ",
-            self.dis_ancestors,
-        )
-
-    def do_nice_print(self):
-        print(self.label, " : ", self.name, " ", self.args)
-        if self.conc_thm != None:
-            print(
-                "    by thm ",
-                self.conc_thm.name,
-                " applied to facts ",
-                *self.dependencies
-            )
+    def print_nice(self) -> None:
+        """Print fact in human-readable format."""
+        print(f"{self.label} : {self.name} {self.args}")
+        if self.conc_thm is not None:
+            deps_str = " ".join(str(d) for d in self.dependencies)
+            print(f"    by thm {self.conc_thm.name} applied to facts {deps_str}")
         else:
             print("    by hypothesis")
-        if self.dis_ancestors != set():
-            print("    Disjunctions in history: ", *self.dis_ancestors)
+        if self.dis_ancestors:
+            anc_str = " ".join(str(a) for a in self.dis_ancestors)
+            print(f"    Disjunctions in history: {anc_str}")
         print()
 
-    def equals(self, fact):
-        if self.name != fact.name:
-            return False
-        if self.args != fact.args:
-            return False
-        return True
+    def __eq__(self, other: object) -> bool:
+        """Check structural equality (same name and args)."""
+        if not isinstance(other, Fact):
+            return NotImplemented
+        return self.name == other.name and self.args == other.args
 
-    def copy(self):
-        return Fact(self.name, list(self.args), self.depth)
+    def __hash__(self) -> int:
+        """Hash based on structure for use in sets/dicts."""
+        return hash((self.name, tuple(self.args)))
+
+    # Legacy compatibility
+    def do_print(self):
+        """Deprecated: use __str__ or print_nice instead."""
+        print(self)
+
+    def do_nice_print(self):
+        """Deprecated: use print_nice instead."""
+        self.print_nice()
+
+    def equals(self, fact):
+        """Deprecated: use == instead."""
+        return self == fact
 
     # returns a normal form for the fact structure
     # useful for matching facts to theorem arguments
@@ -74,18 +89,56 @@ class Fact:
 #        return self.name + str(len(args))
 
 
+@dataclass(frozen=True)
+class DisjunctionKey:
+    """
+    Immutable structural key for efficient disjunction deduplication.
+
+    Uses sorted tuples to create a canonical representation that avoids
+    expensive string concatenation while enabling O(1) hash-based lookups.
+
+    Attributes:
+        facts_tuple: Sorted tuple of (name, args) pairs
+        ancestors_tuple: Sorted tuple of disjunction ancestors
+        conc_thm: The concluding theorem, if any
+    """
+    facts_tuple: Tuple[Tuple[str, Tuple[Any, ...]], ...]
+    ancestors_tuple: Tuple[Tuple[str, int], ...]
+    conc_thm: Optional[str]
+
+    @staticmethod
+    def from_disjunction(facts: List['Fact'], dis_ancestors: Set[Tuple[str, int]],
+                        conc_thm: Optional[Any] = None) -> 'DisjunctionKey':
+        """Create a DisjunctionKey from disjunction components."""
+        # Sort facts by (name, args) for canonical representation
+        sorted_facts = tuple(sorted((f.name, tuple(f.args)) for f in facts))
+
+        # Sort ancestors for canonical representation
+        sorted_ancestors = tuple(sorted(dis_ancestors)) if dis_ancestors else ()
+
+        # Extract theorem name if present
+        thm_name = conc_thm.name if conc_thm and hasattr(conc_thm, 'name') else None
+
+        return DisjunctionKey(sorted_facts, sorted_ancestors, thm_name)
+
+
 # an OR of facts
 class Disjunction:
 
-    def __init__(self, facts, dependencies=None, label=None, dis_ancestors=None):
+    def __init__(self, facts, dependencies=None, label=None, dis_ancestors=None, conc_thm=None):
         dependencies = [] if dependencies is None else dependencies
         dis_ancestors = [] if dis_ancestors is None else dis_ancestors
         self.facts = facts
         self.dependencies = dependencies
         self.dis_ancestors = set()
         self.label = label
+        self.conc_thm = conc_thm
 
         self.useful = False
+
+    def get_key(self) -> DisjunctionKey:
+        """Generate structural key for deduplication."""
+        return DisjunctionKey.from_disjunction(self.facts, self.dis_ancestors, self.conc_thm)
 
     def do_print(self):
         facts = self.facts
@@ -160,6 +213,9 @@ class Proof_environment:
         self.theorems = theorems
         self.theorem_name_dict = theorem_name_dict
         self.disjunctions = []
+
+        # Disjunction deduplication: map DisjunctionKey -> DisjId
+        self.disj_labels = {}  # For efficient lookup of existing disjunctions
 
         self.goal = goal
         # goal should not already be achieved (probably should check it though)
@@ -278,21 +334,38 @@ class Proof_environment:
                     self.update_useful(fact)
 
             if isinstance(fact, Disjunction):
-                #               new_label = 'D'+str(self.cur_fact_num)
-                new_label = self.new_label(letter="D")
-                self.fact_labels[new_label] = fact
-                fact.label = new_label
-                self.disjunctions.append(fact)
+                # Check if we've seen this disjunction before using structural key
+                disj_key = fact.get_key()
 
-                for i in range(0, len(fact.facts)):
-                    sub_fact = fact.facts[i]
-                    sub_fact.dependencies = [
-                        fact.label
-                    ]  # a subfact of a disjunction depends on the disjunction
-                    sub_fact.dis_ancestors = set(fact.dis_ancestors)
-                    sub_fact.dis_ancestors.add((fact.label, i))
+                if disj_key in self.disj_labels:
+                    # Reuse existing label for duplicate disjunction
+                    existing_label = self.disj_labels[disj_key]
+                    fact.label = existing_label
+                    # Don't add duplicate to disjunctions list
+                    # Still process sub-facts in case they're needed
+                    for i in range(0, len(fact.facts)):
+                        sub_fact = fact.facts[i]
+                        sub_fact.dependencies = [fact.label]
+                        sub_fact.dis_ancestors = set(fact.dis_ancestors)
+                        sub_fact.dis_ancestors.add((fact.label, i))
+                    self.add_new_facts(fact.facts)
+                else:
+                    # New disjunction - add it
+                    new_label = self.new_label(letter="D")
+                    self.fact_labels[new_label] = fact
+                    fact.label = new_label
+                    self.disjunctions.append(fact)
+                    self.disj_labels[disj_key] = new_label  # Remember for dedup
 
-                self.add_new_facts(fact.facts)
+                    for i in range(0, len(fact.facts)):
+                        sub_fact = fact.facts[i]
+                        sub_fact.dependencies = [
+                            fact.label
+                        ]  # a subfact of a disjunction depends on the disjunction
+                        sub_fact.dis_ancestors = set(fact.dis_ancestors)
+                        sub_fact.dis_ancestors.add((fact.label, i))
+
+                    self.add_new_facts(fact.facts)
 
             self.ordered_fact_list.append(new_label)  # add the new label
 
@@ -705,73 +778,239 @@ def match_facts_to_template(template, facts, init_match_dict=None):
     return [matches, dicts]
 
 
-def auto_solve(pf_envir):
+def auto_solve(pf_envir: 'Proof_environment') -> bool:
+    """
+    Optimized agenda-based proof search using trigger indexing and batching.
 
-    MAX_ITERATIONS = 30
+    This function attempts to prove the goal in pf_envir by iteratively applying
+    theorems to facts until either:
+    - The goal is achieved (returns True)
+    - The work queue is exhausted (returns False)
+    - Maximum iterations are reached (returns False)
 
-    thm_matches = {}  # dict mapping theorems in the environment to lists of fact matches
+    Algorithmic improvements over naive O(theorems × facts) approach:
+    1. **Trigger indexing**: Only check theorems relevant to each fact via
+       (fact_name, arity) → [(theorem, premise_index)] index
+    2. **Agenda-based queue**: Process facts one at a time, adding new facts
+       to queue as they're discovered
+    3. **Batch processing**: Process BATCH_SIZE facts per iteration to reduce
+       loop overhead
+    4. **Deque for O(1) operations**: Use collections.deque instead of list
+       for O(1) append/popleft
+    5. **Processed tracking**: Avoid reprocessing facts with a set
+
+    Args:
+        pf_envir: The proof environment containing facts, theorems, and goal
+
+    Returns:
+        True if goal was proven, False otherwise
+    """
+    from collections import deque
+
+    # Build trigger index: map (fact_name, num_args) -> list of (theorem, premise_index, premises)
+    TriggerKey = Tuple[str, int]  # (fact_name, num_args)
+    TriggerValue = Tuple[Any, int, List[Fact]]  # (theorem, premise_idx, premises)
+    trigger_index: Dict[TriggerKey, List[TriggerValue]] = {}
+
     for thm in pf_envir.theorems:
-        thm_matches[thm] = match_facts_to_theorem(thm.facts, pf_envir.facts)
+        for i, premise in enumerate(thm.facts):
+            key = (premise.name, len(premise.args))
+            if key not in trigger_index:
+                trigger_index[key] = []
+            trigger_index[key].append((thm, i, thm.facts))
 
-    for i in range(0, MAX_ITERATIONS):
+    # Initialize work queue with all facts
+    work_queue: deque = deque(pf_envir.facts)
+    processed_labels: Set[str] = set()  # Track which facts we've already processed
 
-        print("iteration: ", i)
-        # pick one of the matches according to some procedure
-        # "breadth-first" approach
-        # should remove things once they're already applied
+    iteration = 0
+    while work_queue and iteration < MAX_ITERATIONS:
+        iteration += 1
+        print(f"iteration: {iteration}, queue size: {len(work_queue)}")
 
-        # for dis in pf_envir.disjunctions:
-        encountered_match = False  # check if we're out of matches
-
-        new_facts = []
-
-        for thm in thm_matches:
-
-            #           print("new thm")
-            for match in list(thm_matches[thm]):
-                #               print("   new match")
-                encountered_match = True  # did we actually do anything with the match?
-                #                print("   about to apply ", thm.name)
-                #               for f in match:
-                #                   f.do_print()
-                #                print("   applied")
-
-                #              if(len(facts_from_theorem) > 0): encountered_match = True
-
-                if facts_from_theorem := pf_envir.apply_thm(thm, match):  # sometimes the theorem match might be invalid. FIX?
-                    # FIX move encountered_match here
-                    new_facts += facts_from_theorem
-
-                    # print("----- new facts -----")
-                    # for fact in facts_from_theorem:
-                    #    fact.do_print()
-                    # print("---------------------")
-
-                thm_matches[thm].remove(match)  # prevent reapplying theorems
-
-        if not encountered_match:
-            break  # failed
-
-        for thm in pf_envir.theorems:
-            thm_matches[thm] += match_facts_to_theorem(
-                thm.facts, pf_envir.facts, new_facts
-            )
-
+        # Check if goal achieved
         if pf_envir.goal_achieved:
-            #           print("DONE!")
             pf_envir.print_relevant_facts()
             print("SUCCESS")
             return True
-        else:
-            pass
-        #  print("******************************************")
-        # pf_envir.exec_command("display")
-        # print("******************************************")
-    #           print("next iteration")
 
+        # Extract a batch of facts to process
+        batch = []
+        for _ in range(min(BATCH_SIZE, len(work_queue))):
+            if not work_queue:
+                break
+            fact = work_queue.popleft()
+
+            # Skip already processed facts
+            if fact.label in processed_labels:
+                continue
+
+            batch.append(fact)
+            processed_labels.add(fact.label)
+
+        if not batch:
+            continue  # All facts in batch were already processed
+
+        # Process each fact in the batch
+        for fact in batch:
+            # Find triggered theorems using the index
+            key = (fact.name, len(fact.args))
+            triggers = trigger_index.get(key, [])
+
+            for thm, premise_idx, premises in triggers:
+                # Try to complete the match starting from this fact
+                matches = _match_with_trigger(pf_envir, fact, thm, premise_idx, premises)
+
+                for match in matches:
+                    # Apply theorem
+                    if new_facts := pf_envir.apply_thm(thm, match):
+                        # Add new facts to work queue
+                        work_queue.extend(new_facts)
+
+    # Failed to prove goal
     pf_envir.print_relevant_facts()
     print("FAILURE")
-    return False  # surpassed max iterations
+    return False
+
+
+def _match_with_trigger(
+    pf_envir: 'Proof_environment',
+    new_fact: Fact,
+    thm: Any,
+    trigger_idx: int,
+    premises: List[Fact]
+) -> List[List[Fact]]:
+    """
+    Try to complete a theorem match given that new_fact matches premise at trigger_idx.
+
+    This implements incremental theorem matching: given that we know new_fact
+    unifies with premises[trigger_idx], we try to find matches for all other
+    premises to complete the theorem application.
+
+    Args:
+        pf_envir: The proof environment with available facts
+        new_fact: The newly added fact that triggered this theorem
+        thm: The theorem being matched
+        trigger_idx: Index of the premise that new_fact matched
+        premises: All premises of the theorem
+
+    Returns:
+        List of complete matches, where each match is a list of facts
+        in the same order as premises
+    """
+    # Try to unify new_fact with the premise at trigger_idx
+    initial_dict = {}
+    if not _unify_facts(premises[trigger_idx], new_fact, initial_dict):
+        return []
+
+    # Split premises: before trigger, trigger itself, after trigger
+    before_premises = premises[:trigger_idx]
+    after_premises = premises[trigger_idx + 1:]
+
+    # Match premises before the trigger
+    before_matches = [[]]
+    before_dicts = [initial_dict.copy()]
+
+    for premise in before_premises:
+        new_before_matches = []
+        new_before_dicts = []
+
+        for match, dict_so_far in zip(before_matches, before_dicts):
+            for candidate in pf_envir.facts:
+                new_dict = dict_so_far.copy()
+                if _unify_facts(premise, candidate, new_dict):
+                    new_before_matches.append(match + [candidate])
+                    new_before_dicts.append(new_dict)
+
+        before_matches = new_before_matches
+        before_dicts = new_before_dicts
+
+        if not before_matches:
+            return []  # Can't match all before premises
+
+    # For each "before" match, try to match "after" premises
+    complete_matches = []
+
+    for before_match, dict_after_before in zip(before_matches, before_dicts):
+        after_matches = [[]]
+        after_dicts = [dict_after_before.copy()]
+
+        for premise in after_premises:
+            new_after_matches = []
+            new_after_dicts = []
+
+            for match, dict_so_far in zip(after_matches, after_dicts):
+                for candidate in pf_envir.facts:
+                    new_dict = dict_so_far.copy()
+                    if _unify_facts(premise, candidate, new_dict):
+                        new_after_matches.append(match + [candidate])
+                        new_after_dicts.append(new_dict)
+
+            after_matches = new_after_matches
+            after_dicts = new_after_dicts
+
+            if not after_matches:
+                break  # Can't match all after premises
+
+        # Reconstruct in premise order: before + [trigger] + after
+        for after_match in after_matches:
+            complete_matches.append(before_match + [new_fact] + after_match)
+
+    return complete_matches
+
+
+def _unify_facts(template: Fact, fact: Fact, substitution_dict: Dict[str, Any]) -> bool:
+    """
+    Try to unify template with fact, updating substitution_dict in place.
+
+    Unification matches a template fact (with variables) against a concrete fact,
+    binding variables to values. This is optimized to avoid string allocations
+    by comparing structurally when possible.
+
+    Variable convention:
+    - Uppercase strings (e.g., 'G', 'H') are variables that can bind to any value
+    - Lowercase strings and other values must match exactly
+
+    Args:
+        template: The pattern fact (may contain variables)
+        fact: The concrete fact to match against
+        substitution_dict: Dictionary mapping variable names to values (modified in place)
+
+    Returns:
+        True if unification succeeds (template matches fact), False otherwise
+
+    Example:
+        >>> template = Fact("order", ["G", 12])
+        >>> fact = Fact("order", ["group1", 12])
+        >>> subst = {}
+        >>> _unify_facts(template, fact, subst)
+        True
+        >>> subst
+        {'G': 'group1'}
+    """
+    if template.name != fact.name:
+        return False
+    if len(template.args) != len(fact.args):
+        return False
+
+    for t_arg, f_arg in zip(template.args, fact.args):
+        # Structural comparison - avoid string conversion
+        if isinstance(t_arg, str):
+            if t_arg.isupper():  # Variable (uppercase)
+                if t_arg in substitution_dict:
+                    if substitution_dict[t_arg] != f_arg:
+                        return False
+                else:
+                    substitution_dict[t_arg] = f_arg
+            else:  # Exact match required
+                if t_arg != f_arg:
+                    return False
+        else:
+            # Both should be the same type and value
+            if t_arg != f_arg:
+                return False
+
+    return True
 
 
 ################################### FACT GENERATORS ######################################

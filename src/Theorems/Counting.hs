@@ -10,21 +10,21 @@ module Theorems.Counting
 import Core
 import NumberTheory
 import Predicates
-import Theorems.Common
+import Theorems.Common (arg2, arg3)
 
 ruleCountOrderPkElements :: [Fact] -> [Conclusion]
 ruleCountOrderPkElements [factSylow, factNum, factOrder] =
   case (arg3 factSylow, arg3 factNum, arg2 factOrder) of
     (Just (_pSub, pArg, gArg), Just (_pArg2, _gArg2, nPArg), Just (_pArg3, pkArg)) ->
-      let g = argText gArg
-          p = readInt (argText pArg)
-          nP = readInt (argText nPArg)
-          pk = readInt (argText pkArg)
-          lowerBound
-            | pk == p = (p - 1) * nP
-            | nP == 1 = pk - 1
-            | otherwise = pk
-       in [CFact (orderPkLowerBound (sym g) (sym (show p)) (sym (show lowerBound)))]
+      case (pArg, nPArg, pkArg) of
+        (Num p, Num nP, Num pk) ->
+          let g = argText gArg
+              lowerBound
+                | pk == p = (p - 1) * nP
+                | nP == 1 = pk - 1
+                | otherwise = pk
+           in [CFact (orderPkLowerBound (sym g) (num p) (num lowerBound))]
+        _ -> [] -- Not Num args
     _ -> []
 ruleCountOrderPkElements _ = []
 
@@ -43,17 +43,15 @@ countOrderPkElements =
 ruleCountingContradiction :: [Fact] -> [Conclusion]
 ruleCountingContradiction [fact1, fact2, factOrder] =
   case (arg3 fact1, arg3 fact2, arg2 factOrder) of
-    (Just (_g1, p1Arg, n1Arg), Just (_g2, p2Arg, n2Arg), Just (_g3, nArg)) ->
-      let p1 = readInt (argText p1Arg)
-          p2 = readInt (argText p2Arg)
-          n1 = readInt (argText n1Arg)
-          n2 = readInt (argText n2Arg)
-          n = readInt (argText nArg)
-       in if p1 == p2
+    (Just (_, p1Arg, n1Arg), Just (_, p2Arg, n2Arg), Just (_, nArg)) ->
+      case (p1Arg, p2Arg, n1Arg, n2Arg, nArg) of
+        (Num p1, Num p2, Num n1, Num n2, Num n) ->
+          if p1 == p2
             then []
             else if n1 + n2 + 1 > n
               then [CFact falseFact]
               else []
+        _ -> [] -- Not Num args
     _ -> []
 ruleCountingContradiction _ = []
 
@@ -73,10 +71,12 @@ ruleMultipleSylows :: [Fact] -> [Conclusion]
 ruleMultipleSylows [factNum] =
   case arg3 factNum of
     Just (pArg, gArg, nPArg) ->
-      let nP = readInt (argText nPArg)
-          p = argText pArg
-          g = argText gArg
-       in if nP > 1 then [CFact (moreThanOneSylow (sym p) (sym g))] else []
+      case nPArg of
+        Num nP ->
+          let p = argText pArg
+              g = argText gArg
+           in if nP > 1 then [CFact (moreThanOneSylow (sym p) (sym g))] else []
+        _ -> [] -- Not a Num arg
     _ -> []
 ruleMultipleSylows _ = []
 
@@ -93,14 +93,15 @@ rulePossibleMaxIntersections :: [Fact] -> [Conclusion]
 rulePossibleMaxIntersections [factMore, factOrder] =
   case (arg2 factMore, arg3 factOrder) of
     (Just (pArg, gArg), Just (_gArg2, _pArg2, pkArg)) ->
-      let p = readInt (argText pArg)
-          pk = readInt (argText pkArg)
-          g = argText gArg
-          build v
-            | v == pk = []
-            | otherwise = maxSylowIntersection (sym g) (sym (show p)) (sym (show v)) : build (v * p)
-          disFacts = build 1
-       in [CDisj (Disjunction disFacts)]
+      case (pArg, pkArg) of
+        (Num p, Num pk) ->
+          let g = argText gArg
+              build v
+                | v == pk = []
+                | otherwise = maxSylowIntersection (sym g) (num p) (num v) : build (v * p)
+              disFacts = build 1
+           in [CDisj (Disjunction disFacts)]
+        _ -> [] -- Not Num args
     _ -> []
 rulePossibleMaxIntersections _ = []
 
@@ -130,11 +131,11 @@ ruleRuleOutMaxIntersections :: [Fact] -> [Conclusion]
 ruleRuleOutMaxIntersections [factNum, factMax, factOrder] =
   case (arg3 factNum, arg3 factMax, arg3 factOrder) of
     (Just (_pArg, _gArg, npArg), Just (_gArg2, _pArg2, plArg), Just (_gArg3, _pArg3, pkArg)) ->
-      let np = readInt (argText npArg)
-          pl = readInt (argText plArg)
-          pk = readInt (argText pkArg)
-          denom = if pl == 0 then 0 else pk `div` pl
-       in if denom == 0 || np `mod` denom /= 1 then [CFact falseFact] else []
+      case (npArg, plArg, pkArg) of
+        (Num np, Num pl, Num pk) ->
+          let denom = if pl == 0 then 0 else pk `div` pl
+           in if denom == 0 || np `mod` denom /= 1 then [CFact falseFact] else []
+        _ -> [] -- Not Num args
     _ -> []
 ruleRuleOutMaxIntersections _ = []
 

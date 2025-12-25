@@ -1,41 +1,42 @@
 module EnvPrint
   ( printRelevantFacts
-  , printProofTrace
+  , showProofTrace
   ) where
 
 import Core
 import Env
 import ProofTrace
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 
-printRelevantFacts :: ProofEnvironment -> IO ()
-printRelevantFacts = printProofTrace . buildTrace
+printRelevantFacts :: ProofEnvironment -> [String]
+printRelevantFacts = showProofTrace . buildTrace
 
-printProofTrace :: [ProofStep] -> IO ()
-printProofTrace = mapM_ printStep
+showProofTrace :: [ProofStep] -> [String]
+showProofTrace = concatMap showStep
   where
-    printStep step
-      | psUseful step = do
-          putStrLn
-            ( labelText (psLabel step)
+    showStep step
+      | psUseful step =
+          [ ( labelText (psLabel step)
                 ++ " : "
                 ++ factName (psFact step)
                 ++ " "
                 ++ show (map argText (factArgs (psFact step)))
             )
-          case psConcThm step of
-            Just thmName' ->
-              putStrLn
+          , case psConcThm step of
+              Just thmName' ->
                 ( "    by thm "
                     ++ thmName'
                     ++ " applied to facts "
                     ++ unwords (map labelText (psDependencies step))
                 )
-            Nothing -> putStrLn "    by hypothesis"
-          if null (psDisAncestors step)
-            then pure ()
-            else putStrLn ("    Disjunctions in history: " ++ show (map disjEntryText (psDisAncestors step)))
-          putStrLn ""
-      | otherwise = pure ()
+              Nothing -> "    by hypothesis"
+          ]
+            ++ if null (psDisAncestors step)
+              then []
+              else ["    Disjunctions in history: " ++ show (map disjEntryText (psDisAncestors step))]
+            ++ [""]
+      | otherwise = []
 
 disjEntryText :: (DisjId, Int) -> String
 disjEntryText (DisjId n, idx) = "(" ++ "D" ++ show n ++ "," ++ show idx ++ ")"

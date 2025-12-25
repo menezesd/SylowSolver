@@ -2,6 +2,13 @@ module ProofTrace
   ( ProofStep(..)
   , buildTrace
   , labelText
+  -- Accessor functions
+  , psLabel
+  , psFact
+  , psDependencies
+  , psDisAncestors
+  , psConcThm
+  , psUseful
   ) where
 
 import Core
@@ -9,32 +16,38 @@ import Env
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
+-- ProofStep now wraps FactEntry directly instead of reconstructing fields
 data ProofStep = ProofStep
-  { psLabel :: Label
-  , psFact :: Fact
-  , psDependencies :: [Label]
-  , psDisAncestors :: [(DisjId, Int)]
-  , psConcThm :: Maybe String
-  , psUseful :: Bool
+  { psFactEntry :: FactEntry
   } deriving (Eq, Show)
 
+-- Accessor functions for backward compatibility
+psLabel :: ProofStep -> Label
+psLabel = LFact . feLabel . psFactEntry
+
+psFact :: ProofStep -> Fact
+psFact = feFact . psFactEntry
+
+psDependencies :: ProofStep -> [Label]
+psDependencies = feDependencies . psFactEntry
+
+psDisAncestors :: ProofStep -> [(DisjId, Int)]
+psDisAncestors = Set.toList . feDisAncestors . psFactEntry
+
+psConcThm :: ProofStep -> Maybe String
+psConcThm = feConcThm . psFactEntry
+
+psUseful :: ProofStep -> Bool
+psUseful = feUseful . psFactEntry
+
 buildTrace :: ProofEnvironment -> [ProofStep]
-buildTrace env = mapMaybeStep (peOrderedFacts env)
+buildTrace env = mapMaybeStep (reverse (peOrderedFacts env))
+  -- Reverse to get chronological order (fdOrderedFacts is newest-first)
   where
     mapMaybeStep [] = []
     mapMaybeStep (lbl : rest) =
       case Map.lookup lbl (peFactLabels env) of
-        Just (LFactEntry fe) ->
-          let step =
-                ProofStep
-                  { psLabel = lbl
-                  , psFact = feFact fe
-                  , psDependencies = feDependencies fe
-                  , psDisAncestors = Set.toList (feDisAncestors fe)
-                  , psConcThm = feConcThm fe
-                  , psUseful = feUseful fe
-                  }
-           in step : mapMaybeStep rest
+        Just (LFactEntry fe) -> ProofStep fe : mapMaybeStep rest
         _ -> mapMaybeStep rest
 
 labelText :: Label -> String
