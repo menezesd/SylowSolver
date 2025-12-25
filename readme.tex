@@ -9,35 +9,55 @@ oneside]{article} % use "amsart" instead of "article" for AMSLaTeX format
 \usepackage{amssymb}
 \usepackage{amsthm}
 \usepackage{amsmath}
+\usepackage{hyperref}
 \usepackage{mathpazo,euler}
 %SetFonts
 
 %SetFonts
 \newtheorem{theorem}{Theorem}
 
-\title{Automating Sylow's Theorems}
-
-%\date{}							% Activate to display a given date or no date
+\title{Automating Sylow's Theorems: A Framework Overview}
+\author{Dean Menezes}
 
 \begin{document}
 \maketitle
 
+\begin{abstract}
+This document presents a conceptual overview of a framework for automating proofs based on Sylow's Theorems in finite group theory. The framework employs a hybrid approach, combining a predefined set of group-theoretic techniques with a simple theorem-proving engine that searches for contradictions. By abstracting facts and theorems, the system can systematically explore properties of finite groups, particularly in demonstrating the non-existence of simple groups for various orders. Implementations of this framework exist in both Python and Haskell, offering practical applications of the described methodology. This paper details the core techniques, the abstraction model, and the underlying proof search strategy, alongside discussions on limitations and future directions.
+\end{abstract}
+
+This document provides a conceptual overview of the framework and theoretical techniques employed in an automated theorem prover designed to demonstrate properties of finite groups, particularly focusing on Sylow-style arguments. Concrete implementations of this framework exist in both Python and Haskell.
+
+For detailed documentation, including module structure, setup instructions, and language-specific features of the Python implementation, please refer to \href{readme_python.tex}{readme\_python.tex}.
+
+For similar detailed documentation of the Haskell implementation, please refer to \href{readme_haskell.tex}{readme\_haskell.tex}.
+
 Nearly every introductory group theory course has a problem set with a
 series of problems of the form ``prove that there are no simple groups
-of order $n$," for various values of $n$.  Nearly all of these
+of order $n$," for various values of $n$. Nearly all of these
 problems fall to a relatively small set of techniques, generally based
-on applications of Sylow's theorems.  Once the list of techniques is
+on applications of Sylow's theorems. Once the list of techniques is
 established, these problems generally do not require new insights to
-solve.  Generally, one starts with a list of the possible numbers of
+solve. Generally, one starts with a list of the possible numbers of
 Sylow subgroups and then gradually rule out various numbers until
-hitting a contradiction.  This process feels similar to working
-through logic grid and sudoku puzzles.  Since computers are excellent
+hitting a contradiction. This process feels similar to working
+through logic grid and sudoku puzzles. Since computers are excellent
 sudoku solvers, it's reasonable to hope that they also make excellent
-Sylow solvers.  We make a first step in this direction by implementing
+Sylow solvers. We make a first step in this direction by implementing
 several of the common Sylow tricks, and developing a simple theorem
-prover which can apply these tricks.  We hope that this first proof of
+prover which can apply these tricks. We hope that this first proof of
 concept will inspire other more sophisticated attempts towards Sylow
 automation.
+
+\section{Implementations}
+
+The theoretical framework described in this document has been concretely realized in two distinct programming language implementations: Python and Haskell. While both adhere to the core principles outlined here, they differ in their specific syntax, module organization, and language-specific features.
+
+\subsection{Python Implementation}
+The Python implementation serves as a direct realization of the theorem-proving concepts, particularly emphasizing the dynamic nature of fact and theorem manipulation. It is documented in detail in \href{readme_python.tex}{readme\_python.tex}.
+
+\subsection{Haskell Implementation}
+The Haskell implementation is a port of this framework, leveraging Haskell's strong type system and functional paradigms to provide a robust and extensible theorem prover. Its detailed documentation, including module structure and usage, can be found in \href{readme_haskell.tex}{readme\_haskell.tex}.
 
 \section{Sylow Theory Techniques}
 
@@ -296,15 +316,16 @@ as well as other types of theorems.
 \subsection{Facts and Techniques}
 
 Within our framework, a \textit{simple fact} consists simply of a name
-(which is a string), followed by an (ordered) list of strings which
-are thought of as a set of arguments for a given type of fact.  For
-example the fact, \texttt{(group, [G])} expresses the logical
-statement ``$G$ is a group". In a similar way, the fact
-\texttt{(order, [G,n])} expresses the statement ``the order of G is
-$n$" (while $n$ is formally a string within our framework, we
-generally convert it to an integer before working with it).  We make
-note that the logical description associated to a fact is only for the
-sake of human understanding, and is not used by our program.
+(which is a string), followed by an (ordered) list of arguments. These
+arguments can represent various entities, such as concrete symbols,
+variables, or numeric literals. For example, the fact,
+\texttt{(group, [G])} expresses the logical statement ``$G$ is a group",
+while \texttt{(order, [G,n])} expresses ``the order of G is $n$".
+The type and handling of arguments (e.g., whether numeric values are
+treated as distinct from string representations) vary by implementation.
+We note that the logical description associated with a fact is primarily
+for human understanding and is not directly interpreted by the core
+theorem-proving engine.
 
 It is useful to be able to describe more complicated facts which are
 connected by a logical or.  To express such facts, we define a
@@ -344,28 +365,23 @@ match the template.  If the facts [(group, [H]), (order, [H], 10)]
 were input into the theorem instead, the result would be the same,
 however G would be replaced by H.
 
-We complicate this model slightly for implementation purposes.  A fact
-output by a theorem may contain an argument which is a string
-beginning with a question mark (e.g. ?T).  This means that ?T is a
-wildcard character whose value will be decided later.  The reason for
-this is that we would like theorems to be able to state the existence
-of new mathematical objects.  Within our framework such an object must
-be given a name, but that name should not collide with a string that
-is already in use.  A theorem object does not have a broad enough
-scope to see the other strings that are currently in use, so the
-wildcard character is our way of delegating the task of choosing names
-elsewhere.  A typical use of the wildcard character is to express the
-fact "there exists a group of order $n$".  A theorem that wants to
-return such a fact might return \texttt{[(group, [?G]),
-  (order,[?G,n])]} The string \texttt{?G} will be replaced a new name
-later on.
+We complicate this model slightly for implementation purposes. A fact
+output by a theorem may contain an argument that acts as a placeholder
+for a new, yet-to-be-named mathematical object. This allows theorems
+to assert the existence of new entities without requiring them to
+pre-allocate unique identifiers. The task of assigning a globally
+unique name is delegated to the proof environment. For example, a
+theorem might express "there exists a group of order $n$", where the
+group's name is initially a placeholder. The specific syntax for such
+placeholders varies between implementations; refer to the respective
+language documentation for details.
 
-We also allow the strings in our templates to start with the special
-character '*'. This indicates that we do not allow this string to be
-renamed in the usual way when deciding template matching.  The typical
-use of this is for an input fact such as (order, H, *1), where a
-specific number is important. The *1 indicates that the string 1 may
-not be replaced with any other value when template matching.
+Similarly, our framework supports arguments in templates that require
+an exact literal match, preventing them from being treated as
+variables that can be unified with other symbols. This is useful when
+a specific numerical value or constant is critical for the theorem's
+application. The syntax for denoting such exact matches is
+implementation-dependent; consult the specific language documentation.
 
 \subsection{Proving Theorems}
 
@@ -486,6 +502,16 @@ and insight. We hope this work will inspire further research into
 automated theorem proving, particularly in areas like finite group
 theory where many problems share a common set of techniques.
 
+\section{Future Work}
+This proof-of-concept work opens several avenues for future research and development:
+\begin{itemize}
+    \item \textbf{Expanding the Theorem Set:} Integrate more advanced group-theoretic techniques and theorems to broaden the range of group orders and properties that can be analyzed automatically. This could include theorems related to soluble groups, commutator subgroups, or specific group actions.
+    \item \textbf{Improving Search Strategies:} Implement more sophisticated proof search algorithms beyond brute-force, such as heuristic search, goal-directed reasoning, or integration with SMT solvers, to handle more complex scenarios and mitigate combinatorial explosion, especially with disjunctions.
+    \item \textbf{Interactive Proof Assistance:} Develop a user interface that allows human users to guide the prover, inspect partial proofs, or suggest new facts and theorems, creating a hybrid human-computer proof-assistant system.
+    \item \textbf{Formal Verification and Correctness:} Explore methods to formally verify the correctness of the implemented theorems and the proof engine itself, potentially using proof assistants like Coq or Isabelle/HOL.
+    \item \textbf{Generalization to Other Algebraic Structures:} Adapt the framework to automate proofs in other areas of abstract algebra (e.g., ring theory, field theory) or even other mathematical domains, by defining new fact types and theorem rules.
+    \item \textbf{Performance Optimization:} Investigate performance bottlenecks in both Python and Haskell implementations and apply optimizations, including parallelization strategies for exploring disjunction branches.
+\end{itemize}
 
 \section{Appendix: The Interesting Group Orders}
 We give several lists summarizing the first few challenging group

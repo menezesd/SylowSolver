@@ -1,0 +1,75 @@
+\documentclass[11pt,oneside]{article}
+\usepackage{geometry}
+\geometry{letterpaper}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{mathpazo,euler}
+\usepackage{hyperref}
+
+\title{Sylow Solver: Python Implementation}
+\author{Dean Menezes}
+\date{}
+
+\begin{document}
+\maketitle
+
+This document provides detailed documentation for the Python implementation of the automated Sylow theorem prover. For a general overview of the theoretical framework and techniques, please refer to \href{readme.tex}{readme.tex}.
+
+\section{Overview}
+The Python implementation serves as a direct realization of the theorem-proving concepts outlined in the main framework document. It emphasizes a dynamic approach to fact and theorem manipulation, providing a flexible environment for exploring Sylow-style arguments.
+
+\section{File Structure and Modules}
+The core logic is distributed across the following Python files:
+\begin{table}[h!]\centering
+\begin{tabular}{ll}
+\texttt{auto2.py} & Main automated theorem prover logic, including Fact, Disjunction, Theorem classes, and the auto\_solve function. \\
+\texttt{sylow2.py} & Utility functions for number theory, such as primality tests, prime factorization, and Sylow p-subgroup calculations.\end{tabular}
+    \caption{Python Modules}
+    \label{tab:python_modules}
+\end{table}
+
+\section{Running the Python Solver}
+The primary entry point for the Python solver is the `auto2.py` script. It can be run in two main modes:
+
+\subsection{Interactive Mode}
+To run the solver in interactive mode, simply execute the script without any arguments:
+\begin{verbatim}
+python auto2.py
+\end{verbatim}
+The program will then prompt you to `Enter a group order: ` in the console.
+
+\subsection{Batch Mode (with Arguments)}
+You can also provide group orders directly as command-line arguments. The `auto2.py` script expects group orders to be passed directly as string arguments. For example, to test orders 12 and 24:
+\begin{verbatim}
+python auto2.py 12 24
+\end{verbatim}
+The script will process each provided order and output the proof result.
+
+\section{Facts, Arguments, and Matching Specifics}
+The Python implementation uses specific syntax for defining facts and templates, particularly for placeholders and exact matches, to facilitate dynamic theorem application.
+
+\subsection{Wildcard Characters (?)}
+Arguments in a fact or template that begin with a question mark (e.g., \texttt{?T}) are treated as wildcard characters. These signify a placeholder for a new mathematical object whose specific name will be decided by the proof environment at the time of theorem application. This mechanism allows theorems to assert the existence of new entities (e.g., a new group or subgroup) without pre-defining their unique identifiers, which are generated to avoid collisions with existing names.
+
+Example: A theorem asserting the existence of a group of order $n$ might return facts like \texttt{[(group, [?G]), (order,[?G,n])]}. The string \texttt{?G} would then be replaced by a newly generated unique name (e.g., 'A', 'B', 'C', or 'A1', 'B1', etc.) by the environment.
+
+\subsection{Exact Match Characters (*)}
+Strings in templates that start with an asterisk (e.g., \texttt{*1}) indicate that this argument must match literally and cannot be unified with other variables or symbols. This is crucial for situations where a specific numerical value or constant is integral to the theorem's condition. For instance, in an input fact like \texttt{(order, H, *1)}, the \texttt{*1} ensures that the order must explicitly be 1, and not any other value.
+
+\subsection{Numeric Arguments}
+Numeric arguments (integers) are typically passed as strings in facts and templates, and then converted to their integer representation when needed for arithmetic operations or comparisons within theorem rules. For example, in a fact representing an order like \texttt{(order, G, "12")}, "12" is a string that can be parsed as an integer by the theorem logic. While the internal `Fact` representation allows for direct integer types, the external input and template matching often involve string representations of numbers.
+
+\section{Theorem Set}
+The Python implementation includes a set of theorems mirroring standard Sylow-based reasoning, similar to the Haskell version. These theorems are defined within `auto2.py` and `sylow2.py` and cover:
+\begin{itemize}
+\item Sylow subgroup counts and existence.
+\item Normality from a unique Sylow subgroup.
+\item Embedding into alternating groups and index arguments.
+\item Counting arguments for elements of $p$-power order.
+\item Normalizer-of-intersection arguments and related constraints.
+\end{itemize}
+
+\section{Further Details}
+For an understanding of the underlying theoretical concepts, refer to the main \href{readme.tex}{readme.tex} document.
+
+\end{document}
