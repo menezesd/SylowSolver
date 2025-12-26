@@ -6,7 +6,7 @@ import argparse
 import logging
 from typing import Iterable, List
 
-from sylow_solver.config import SolverConfig
+from sylow_solver.config import OutputMode, SolverConfig
 from sylow_solver.logging_utils import get_logger
 from sylow_solver.search import ProofEnvironment, auto_solve
 from sylow_solver.theorems import (
@@ -85,15 +85,37 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose solver logging.",
     )
+    parser.add_argument(
+        "--tree",
+        action="store_true",
+        help="Use tree view output mode.",
+    )
+    parser.add_argument(
+        "--classic",
+        action="store_true",
+        help="Use classic output mode.",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Use clean output mode (default).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    output_mode = OutputMode.CLEAN
+    if args.tree:
+        output_mode = OutputMode.TREE
+    elif args.classic:
+        output_mode = OutputMode.CLASSIC
+
     config = SolverConfig(
         max_iterations=args.max_iterations,
         batch_size=args.batch_size,
         verbose=args.verbose,
+        output_mode=output_mode,
     )
     log_level = logging.INFO if args.verbose else logging.WARNING
     logger = get_logger("sylow_solver", level=log_level)

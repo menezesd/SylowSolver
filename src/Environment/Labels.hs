@@ -10,7 +10,7 @@ import Core
 import Environment.Types
 import Data.List (sort, sortOn, intercalate)
 import Data.Maybe (maybeToList)
-import qualified Data.Map.Strict as Map
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Set as Set
 
 -- Build structural key from disjunction entry (DisjunctionKey defined in Types)
@@ -18,11 +18,10 @@ disjunctionKey :: DisjunctionEntry -> DisjunctionKey
 disjunctionKey disj =
   let facts = sortOn (\(Fact n a) -> (n, a)) (deFacts disj)
       ancestors = sort (Set.toList (deDisAncestors disj))
-   in DisjunctionKey
-        { dkFacts = [(factName f, factArgs f) | f <- facts]
-        , dkThm = deConcThm disj
-        , dkAncestors = ancestors
-        }
+   in mkDisjunctionKey
+        [(factName f, factArgs f) | f <- facts]
+        (deConcThm disj)
+        ancestors
 
 -- Generate a new unique fact label
 newFactLabel :: ProofEnvironment -> (FactId, ProofEnvironment)
@@ -39,7 +38,7 @@ canonicalDisjunctionSignature disj =
           | f <- deFacts disj
           ]
       prov =
-        map ("thm:" ++) (maybeToList (fmap theoremNameText (deConcThm disj)))
+        map ("thm:" ++) (maybeToList (theoremNameText <$> deConcThm disj))
           ++ [ "anc:" ++ intercalate "," ancLabels
              | not (Set.null (deDisAncestors disj))
              , let ancLabels = sort (Set.toList (Set.map disjLabelText (deDisAncestors disj)))
@@ -54,10 +53,10 @@ disjLabelText (DisjId n, _) = "D" ++ show n
 newDisjunctionLabel :: ProofEnvironment -> DisjunctionEntry -> (DisjId, ProofEnvironment)
 newDisjunctionLabel env disj =
   let key = disjunctionKey disj
-   in case Map.lookup key (peDisjLabels env) of
+   in case HashMap.lookup key (peDisjLabels env) of
         Just existingId -> (existingId, env)
         Nothing ->
           let newId = DisjId (peCurDisjNum env)
               env' = updateGenState (\gs -> gs { gsCurDisjNum = gsCurDisjNum gs + 1 }) env
-              env'' = updateFactDB (\db -> db { fdDisjLabels = Map.insert key newId (fdDisjLabels db) }) env'
+              env'' = updateFactDB (\db -> db { fdDisjLabels = HashMap.insert key newId (fdDisjLabels db) }) env'
            in (newId, env'')

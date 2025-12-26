@@ -253,9 +253,8 @@ mkFactEntry n fact =
         , feLabel = FactId n
         , feProv = prov
         , feUseful = False
-        , feDepth = 0
+        , feDepth = CaseDepth 0
         , feHash = HashKey (hash fact)
-        , feKey = factKey fact
         }
 
 -- FactDatabase Invariant Tests
@@ -277,7 +276,7 @@ propFactLabelsComplete facts =
       (env1, _) = addNewFacts env0 newConcs
       factDB = peFactDB env1
       orderedLabels = Set.fromList (fdOrderedFacts factDB)
-      factLabelsKeys = Map.keysSet (fdFactLabels factDB)
+      factLabelsKeys = Set.fromList (HashMap.keys (fdFactLabels factDB))
    in orderedLabels `Set.isSubsetOf` factLabelsKeys
 
 propFactsInLabels :: [Fact] -> Bool
@@ -288,7 +287,7 @@ propFactsInLabels facts =
       factDB = peFactDB env1
       allFacts = fdFacts factDB
       factLabelsMap = fdFactLabels factDB
-   in all (\entry -> Map.member (LFact (feLabel entry)) factLabelsMap) allFacts
+   in all (\entry -> HashMap.member (LFact (feLabel entry)) factLabelsMap) allFacts
 
 -- Number Theory property tests
 

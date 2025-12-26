@@ -5,8 +5,9 @@ import logging
 from collections import deque
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
-from .config import DEFAULT_CONFIG, SolverConfig
+from .config import DEFAULT_CONFIG, OutputMode, SolverConfig
 from .facts import Disjunction, DisjunctionKey, Fact
+from .proof_tree import DisjMeta, infer_disj_meta, render_clean, render_tree
 from .theorem_base import HyperTheorem, Theorem
 
 
@@ -37,6 +38,7 @@ class ProofEnvironment:
         self.goal_achieved = False
         self.goal_dis_combos: List[Set[Tuple[str, int]]] = []
         self.fact_labels: Dict[str, Union[Fact, Disjunction]] = {}
+        self.disj_meta: Dict[str, DisjMeta] = {}
         self.cur_fact_num = 0
         self.cur_letter = "A"
         self.cur_suffix = 0
@@ -122,6 +124,7 @@ class ProofEnvironment:
                     fact.label = new_label
                     self.disjunctions.append(fact)
                     self.disj_labels[disj_key] = new_label
+                    self.disj_meta[new_label] = infer_disj_meta(fact)
 
                 self._process_disjunction_subfacts(fact)
                 self.add_new_facts(list(fact.facts))
@@ -247,6 +250,21 @@ class ProofEnvironment:
             fact = self.fact_labels[fact_lbl]
             if isinstance(fact, Fact) and fact.useful:
                 fact.do_nice_print()
+
+    def render_proof(self) -> List[str]:
+        """Render proof based on configured output mode."""
+        mode = self.config.output_mode
+        if mode == OutputMode.CLASSIC:
+            lines = []
+            for fact_lbl in self.ordered_fact_list:
+                fact = self.fact_labels[fact_lbl]
+                if isinstance(fact, Fact) and fact.useful:
+                    lines.append(str(fact))
+            return lines
+        elif mode == OutputMode.TREE:
+            return render_tree(self.facts, self.disjunctions, self.disj_meta)
+        else:  # CLEAN
+            return render_clean(self.facts, self.disjunctions, self.disj_meta)
 
     def print_facts(self) -> None:
         for lbl in self.fact_labels:
@@ -422,8 +440,8 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
             pf_envir.logger.info("iteration %s, queue size: %s", iteration, len(work_queue))
 
         if pf_envir.goal_achieved:
-            if config.verbose:
-                pf_envir.print_relevant_facts()
+            for line in pf_envir.render_proof():
+                print(line)
             pf_envir.logger.info("SUCCESS")
             return True
 
@@ -458,8 +476,8 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
                             elif isinstance(item, Disjunction):
                                 work_queue.extend(item.facts)
 
-    if config.verbose:
-        pf_envir.print_relevant_facts()
+    for line in pf_envir.render_proof():
+        print(line)
     pf_envir.logger.info("FAILURE")
     return False
 

@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 import Auto
@@ -32,9 +34,9 @@ main = do
     runOrder cfg line =
       case readMaybe line :: Maybe Int of
         Just n -> do
-          let facts = [group (sym "G"), order (sym "G") (num n), simple (sym "G")]
+          let initialFacts = [group (sym "G"), order (sym "G") (num n), simple (sym "G")]
               goal = falseFact
-              env = initEnv facts thmList thmNames goal
+              env = initEnv initialFacts thmList thmNames goal
           _ <- autoSolveWith cfg env
           pure ()
         Nothing -> do
@@ -52,7 +54,13 @@ main = do
           case readMaybe n of
             Just i -> go cfg { scBatchSize = i } acc rest
             Nothing -> Left $ "Invalid --batch-size: " ++ n
+        go cfg acc ("--verbose" : rest) = go cfg { scVerbose = True } acc rest
+        go cfg acc ("-v" : rest) = go cfg { scVerbose = True } acc rest
+        go cfg acc ("--dump-hash-buckets" : rest) = go cfg { scDumpHashBuckets = True } acc rest
+        go cfg acc ("--tree" : rest) = go cfg { scOutputMode = OutputTree } acc rest
+        go cfg acc ("--classic" : rest) = go cfg { scOutputMode = OutputClassic } acc rest
+        go cfg acc ("--clean" : rest) = go cfg { scOutputMode = OutputClean } acc rest
         go cfg acc ("--order" : n : rest) = go cfg (n : acc) rest
         go cfg acc (arg : rest)
-          | Just i <- readMaybe arg = go cfg (arg : acc) rest
+          | Just (_ :: Int) <- readMaybe arg = go cfg (arg : acc) rest
           | otherwise = Left $ "Unrecognized argument: " ++ arg

@@ -45,7 +45,7 @@ instance Arbitrary PredName where
   shrink _ = []
 
 symbolFromName :: String -> Symbol
-symbolFromName name = Symbol (abs (hash name)) name
+symbolFromName name = Symbol (SymbolId (abs (hash name))) name
 
 instance Arbitrary Symbol where
   arbitrary = symbolFromName <$> genIdentifier

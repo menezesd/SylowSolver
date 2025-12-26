@@ -1,10 +1,47 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE StrictData #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
 
+-- | Core types for the Sylow solver.
+--
+-- == Error Handling Conventions
+--
+-- The codebase uses different error handling strategies based on context:
+--
+-- * __Unification__ ('Unification' module): Uses @Either UnificationError@
+--   for explicit error types. Failures are expected during theorem matching.
+--
+-- * __Theorem rules__ ('Theorems.*' modules): Return @Maybe [Conclusion]@.
+--   @Nothing@ means the rule doesn't apply; this is normal control flow.
+--
+-- * __Matching__ ('IncrementalMatching'): Returns empty lists @[]@ for no
+--   matches. This allows easy composition with list operations.
+--
+-- * __State updates__ ('ProofMonad'): Uses @ProofM@ monad which wraps @State@.
+--   Operations that can't fail use pure state updates; operations that may
+--   fail (like finding a label) return @Maybe@ within the monad.
+--
+-- The general principle: explicit errors (@Either@) for debugging/diagnostics,
+-- @Maybe@/empty list for expected "no result" cases in search.
+--
 module Core
-  ( Label(..)
+  ( -- * Identity types
+    Label(..)
   , FactId(..)
   , DisjId(..)
+  , BranchIndex(..)
+  , SymbolId(..)
   , Symbol(..)
+  , unSymbol  -- Legacy accessor
+    -- * Measure types
+  , CaseDepth(..)
+  , Arity(..)
+    -- * Predicate names
   , PredName(..)
   , predNameText
   , predNameFromText
@@ -26,38 +63,84 @@ module Core
   , HashKey(..)
   , Fact(..)
   , Disjunction(..)
-  , Theorem(..)
-  , HyperTheorem(..)
-  , Thm(..)
+    -- * Fact pattern synonyms
+  , pattern GroupFact
+  , pattern OrderFact
+  , pattern SimpleFact
+  , pattern NotSimpleFact
+  , pattern NumSylowFact
+  , pattern SubgroupFact
+  , pattern DividesFact
+  , pattern FalseFact
+  , pattern IndexFact
+  , pattern NormalFact
+  , pattern SylowPSubgroupFact
+    -- * View functions for argument extraction
+  , viewArgs1
+  , viewArgs2
+  , viewArgs3
+  , viewNumAt
+    -- * GADT-based theorem representation
+  , ThmKind(..)
+  , TypedThm(..)
+  , Thm
+  , pattern Std
+  , pattern Hyper
   , TheoremTrigger(..)
   , Conclusion(..)
+  , conclusionFacts
   , thmName
   , thmId
   , thmFacts
+  , thmConcs
+  , thmRule
   , ppArg
   , ppFact
   , argAtom
   , matchSym
-  , ppArgWith
-  , argTextWith
-  , ppFactWith
+    -- * IntMap-based pretty printing
+  , ppArgWithIntMap
+  , ppFactWithIntMap
+  , argTextWithIntMap
   ) where
 
 import Data.List (intercalate)
 import Data.Hashable (Hashable(..))
-import qualified Data.Map.Strict as Map
+import qualified Data.IntMap.Strict as IntMap
+
+-- | Unique identifier for interned symbols.
+newtype SymbolId = SymbolId { unSymbolId :: Int }
+  deriving stock (Eq, Ord, Show)
+
+instance Hashable SymbolId where
+  hashWithSalt salt (SymbolId n) = hashWithSalt salt n
+
+-- | Case analysis depth (0 = base level, increases with each disjunction).
+newtype CaseDepth = CaseDepth { unCaseDepth :: Int }
+  deriving stock (Eq, Ord, Show)
+
+-- | Arity of a predicate (number of arguments).
+newtype Arity = Arity { unArity :: Int }
+  deriving stock (Eq, Ord, Show)
+
+instance Hashable Arity where
+  hashWithSalt salt (Arity n) = hashWithSalt salt n
 
 -- | Opaque symbol identifier with stable text for rendering.
 data Symbol = Symbol
-  { unSymbol :: Int
-  , symbolName :: String
+  { symbolId :: {-# UNPACK #-} !SymbolId
+  , symbolName :: !String
   } deriving stock (Show)
 
+-- | Legacy accessor for backwards compatibility
+unSymbol :: Symbol -> Int
+unSymbol = unSymbolId . symbolId
+
 instance Eq Symbol where
-  s1 == s2 = unSymbol s1 == unSymbol s2
+  s1 == s2 = symbolId s1 == symbolId s2
 
 instance Ord Symbol where
-  compare s1 s2 = compare (unSymbol s1) (unSymbol s2)
+  compare s1 s2 = compare (symbolId s1) (symbolId s2)
 
 instance Hashable Symbol where
   hashWithSalt salt (Symbol _ name) = hashWithSalt salt name
@@ -87,6 +170,32 @@ data PredName
   | PNormalizerOfSylowIntersection
   | PCustom String
   deriving stock (Eq, Ord, Show)
+
+instance Hashable PredName where
+  hashWithSalt salt pn = case pn of
+    PGroup -> hashWithSalt salt (0 :: Int)
+    POrder -> hashWithSalt salt (1 :: Int)
+    PSylowOrder -> hashWithSalt salt (2 :: Int)
+    PSylowPSubgroup -> hashWithSalt salt (3 :: Int)
+    PAlternatingGroup -> hashWithSalt salt (4 :: Int)
+    PNumSylow -> hashWithSalt salt (5 :: Int)
+    PSimple -> hashWithSalt salt (6 :: Int)
+    PNotSimple -> hashWithSalt salt (7 :: Int)
+    PSubgroup -> hashWithSalt salt (8 :: Int)
+    PDivides -> hashWithSalt salt (9 :: Int)
+    PFalse -> hashWithSalt salt (10 :: Int)
+    PIndex -> hashWithSalt salt (11 :: Int)
+    PTransitiveAction -> hashWithSalt salt (12 :: Int)
+    POrderPkLowerBound -> hashWithSalt salt (13 :: Int)
+    PMoreThanOneSylow -> hashWithSalt salt (14 :: Int)
+    PIntersection -> hashWithSalt salt (15 :: Int)
+    PNormalizer -> hashWithSalt salt (16 :: Int)
+    POrderLowerBound -> hashWithSalt salt (17 :: Int)
+    PMaxSylowIntersection -> hashWithSalt salt (18 :: Int)
+    PProperSubgroup -> hashWithSalt salt (19 :: Int)
+    PNormal -> hashWithSalt salt (20 :: Int)
+    PNormalizerOfSylowIntersection -> hashWithSalt salt (21 :: Int)
+    PCustom s -> hashWithSalt salt (22 :: Int, s)
 
 predNameText :: PredName -> String
 predNameText pn =
@@ -161,31 +270,47 @@ theoremNameFromText = mkTheoremName
 
 -- Pretty-printing functions for Arg and Fact
 ppArg :: Arg -> String
-ppArg = ppArgWith Map.empty
+ppArg = ppArgWithIntMap IntMap.empty
 
-ppArgWith :: Map.Map Int String -> Arg -> String
-ppArgWith tbl arg =
+ppFact :: Fact -> String
+ppFact = ppFactWithIntMap IntMap.empty
+
+-- | Pretty-print an Arg with a symbol name lookup table
+ppArgWithIntMap :: IntMap.IntMap String -> Arg -> String
+ppArgWithIntMap tbl arg =
   case arg of
-    Sym s -> Map.findWithDefault (symbolName s) (unSymbol s) tbl
+    Sym s -> IntMap.findWithDefault (symbolName s) (unSymbol s) tbl
     Var s -> "?" ++ s
     Exact s -> "'" ++ s ++ "'"
     Fresh s -> "_" ++ s
     Num n -> show n
 
-ppFact :: Fact -> String
-ppFact = ppFactWith Map.empty
+-- | Pretty-print a Fact with a symbol name lookup table
+ppFactWithIntMap :: IntMap.IntMap String -> Fact -> String
+ppFactWithIntMap tbl (Fact n args) =
+  predNameText n ++ "(" ++ intercalate ", " (map (ppArgWithIntMap tbl) args) ++ ")"
 
-ppFactWith :: Map.Map Int String -> Fact -> String
-ppFactWith tbl (Fact n args) =
-  predNameText n ++ "(" ++ intercalate ", " (map (ppArgWith tbl) args) ++ ")"
+newtype FactId = FactId { unFactId :: Int } deriving stock (Eq, Ord, Show)
+newtype DisjId = DisjId { unDisjId :: Int } deriving stock (Eq, Ord, Show)
+newtype BranchIndex = BranchIndex { unBranchIndex :: Int } deriving stock (Eq, Ord, Show)
 
-newtype FactId = FactId Int deriving stock (Eq, Ord, Show)
-newtype DisjId = DisjId Int deriving stock (Eq, Ord, Show)
+instance Hashable FactId where
+  hashWithSalt salt (FactId n) = hashWithSalt salt n
+
+instance Hashable DisjId where
+  hashWithSalt salt (DisjId n) = hashWithSalt salt n
+
+instance Hashable BranchIndex where
+  hashWithSalt salt (BranchIndex n) = hashWithSalt salt n
 
 data Label
   = LFact FactId
   | LDisj DisjId
   deriving stock (Eq, Ord, Show)
+
+instance Hashable Label where
+  hashWithSalt salt (LFact fid) = hashWithSalt salt (0 :: Int, fid)
+  hashWithSalt salt (LDisj did) = hashWithSalt salt (1 :: Int, did)
 
 data Arg
   = Sym Symbol
@@ -205,7 +330,7 @@ instance Hashable Arg where
       Num n -> hashWithSalt salt (4 :: Int, n)
 
 sym :: String -> Arg
-sym s = Sym (Symbol (-1) s)
+sym s = Sym (Symbol (SymbolId (-1)) s)
 
 var :: String -> Arg
 var = Var
@@ -221,12 +346,13 @@ num = Num
 
 {-# INLINE argText #-}
 argText :: Arg -> String
-argText = argTextWith Map.empty
+argText = argTextWithIntMap IntMap.empty
 
-argTextWith :: Map.Map Int String -> Arg -> String
-argTextWith tbl arg =
+-- | Get the text of an argument without pretty-printing prefixes
+argTextWithIntMap :: IntMap.IntMap String -> Arg -> String
+argTextWithIntMap tbl arg =
   case arg of
-    Sym s -> Map.findWithDefault (symbolName s) (unSymbol s) tbl
+    Sym s -> IntMap.findWithDefault (symbolName s) (unSymbol s) tbl
     Var s -> s
     Exact s -> s
     Fresh s -> s
@@ -251,19 +377,19 @@ matchSym _ = Nothing
 -- Replaces the repeated (String, Int) tuple pattern
 data FactKey = FactKey
   { fkName :: PredName
-  , fkArity :: Int
+  , fkArity :: !Arity
   } deriving stock (Eq, Ord, Show)
 
 newtype HashKey = HashKey { unHashKey :: Int }
   deriving stock (Eq, Ord, Show)
 
 instance Hashable FactKey where
-  hashWithSalt salt (FactKey n a) = hashWithSalt salt (predNameText n, a)
+  hashWithSalt salt (FactKey n a) = hashWithSalt salt (n, unArity a)
 
 -- Extract the FactKey from a Fact
 {-# INLINE factKey #-}
 factKey :: Fact -> FactKey
-factKey (Fact name args) = FactKey name (length args)
+factKey (Fact name args) = FactKey name (Arity (length args))
 
 data Fact = Fact
   { factName :: PredName
@@ -271,7 +397,65 @@ data Fact = Fact
   } deriving stock (Eq, Ord, Show)
 
 instance Hashable Fact where
-  hashWithSalt salt (Fact n args) = hashWithSalt salt (predNameText n, length args)
+  hashWithSalt salt (Fact n args) = hashWithSalt salt (n, length args)
+
+-- | Pattern synonyms for common fact types (bidirectional)
+-- These enable both construction and pattern matching
+
+pattern GroupFact :: Arg -> Fact
+pattern GroupFact g = Fact PGroup [g]
+
+pattern OrderFact :: Arg -> Arg -> Fact
+pattern OrderFact g n = Fact POrder [g, n]
+
+pattern SimpleFact :: Arg -> Fact
+pattern SimpleFact g = Fact PSimple [g]
+
+pattern NotSimpleFact :: Arg -> Fact
+pattern NotSimpleFact g = Fact PNotSimple [g]
+
+pattern NumSylowFact :: Arg -> Arg -> Arg -> Fact
+pattern NumSylowFact p g n = Fact PNumSylow [p, g, n]
+
+pattern SubgroupFact :: Arg -> Arg -> Fact
+pattern SubgroupFact h g = Fact PSubgroup [h, g]
+
+pattern DividesFact :: Arg -> Arg -> Fact
+pattern DividesFact m n = Fact PDivides [m, n]
+
+pattern FalseFact :: Fact
+pattern FalseFact = Fact PFalse []
+
+pattern IndexFact :: Arg -> Arg -> Arg -> Fact
+pattern IndexFact g h n = Fact PIndex [g, h, n]
+
+pattern NormalFact :: Arg -> Arg -> Fact
+pattern NormalFact h g = Fact PNormal [h, g]
+
+pattern SylowPSubgroupFact :: Arg -> Arg -> Arg -> Fact
+pattern SylowPSubgroupFact psub p g = Fact PSylowPSubgroup [psub, p, g]
+
+-- | View functions for extracting fact arguments
+-- Use with ViewPatterns extension: f (viewArgs2 -> Just (a, b)) = ...
+
+viewArgs1 :: Fact -> Maybe Arg
+viewArgs1 (Fact _ [a]) = Just a
+viewArgs1 _ = Nothing
+
+viewArgs2 :: Fact -> Maybe (Arg, Arg)
+viewArgs2 (Fact _ [a, b]) = Just (a, b)
+viewArgs2 _ = Nothing
+
+viewArgs3 :: Fact -> Maybe (Arg, Arg, Arg)
+viewArgs3 (Fact _ [a, b, c]) = Just (a, b, c)
+viewArgs3 _ = Nothing
+
+-- | Extract integer from a Num argument at position
+viewNumAt :: Int -> Fact -> Maybe Int
+viewNumAt idx (Fact _ args) =
+  case drop idx args of
+    (Num n : _) -> Just n
+    _ -> Nothing
 
 data Disjunction = Disjunction
   { disjFacts :: [Fact]  -- Empty disjunction = FALSE
@@ -280,35 +464,60 @@ data Disjunction = Disjunction
 instance Hashable Disjunction where
   hashWithSalt salt (Disjunction fs) = hashWithSalt salt fs
 
-data Theorem = Theorem
-  { theoremName :: TheoremName
-  , theoremFacts :: [Fact]
-  , theoremConcs :: [Fact]
-  } deriving stock (Eq, Show)
+-- | Kind-level tag distinguishing theorem types
+data ThmKind
+  = ThmStandard   -- ^ Static theorem with fixed conclusions
+  | ThmComputed   -- ^ Hyper-theorem with computed conclusions
+  deriving stock (Eq, Show)
 
-data HyperTheorem = HyperTheorem
-  { hyperName :: TheoremName
-  , hyperFacts :: [Fact]
-  , hyperRule :: [Fact] -> Maybe [Conclusion]
-  }
+-- | GADT for type-safe theorem representation.
+-- The phantom type 'k' encodes whether conclusions are static or computed.
+data TypedThm (k :: ThmKind) where
+  -- | Standard theorem: fixed premises → fixed conclusions
+  MkStdThm
+    :: TheoremName
+    -> [Fact]  -- ^ Premises (patterns to match)
+    -> [Fact]  -- ^ Conclusions (facts to derive)
+    -> TypedThm 'ThmStandard
 
--- Manual Show instance since hyperRule is a function
-instance Show HyperTheorem where
-  show ht = "HyperTheorem " ++ theoremNameText (hyperName ht)
+  -- | Hyper-theorem: premises + rule function → computed conclusions
+  MkHyperThm
+    :: TheoremName
+    -> [Fact]  -- ^ Premises (patterns to match)
+    -> ([Fact] -> Maybe [Conclusion])  -- ^ Rule that computes conclusions
+    -> TypedThm 'ThmComputed
 
-data Thm
-  = Std Theorem
-  | Hyper HyperTheorem
+deriving stock instance Show (TypedThm 'ThmStandard)
+
+instance Show (TypedThm 'ThmComputed) where
+  show (MkHyperThm name _ _) = "MkHyperThm " ++ theoremNameText name
+
+-- | Existential wrapper for heterogeneous theorem collections.
+-- This allows mixing standard and hyper-theorems in lists.
+data Thm where
+  MkThm :: TypedThm k -> Thm
 
 instance Show Thm where
-  show (Std t) = "Std (" ++ theoremNameText (theoremName t) ++ ")"
-  show (Hyper t) = "Hyper (" ++ theoremNameText (hyperName t) ++ ")"
+  show (MkThm t) = case t of
+    MkStdThm name _ _ -> "Std (" ++ theoremNameText name ++ ")"
+    MkHyperThm name _ _ -> "Hyper (" ++ theoremNameText name ++ ")"
+
+-- | Pattern synonym for standard theorems (backward compatibility)
+pattern Std :: TheoremName -> [Fact] -> [Fact] -> Thm
+pattern Std name prems concs = MkThm (MkStdThm name prems concs)
+
+-- | Pattern synonym for hyper-theorems (backward compatibility)
+pattern Hyper :: TheoremName -> [Fact] -> ([Fact] -> Maybe [Conclusion]) -> Thm
+pattern Hyper name prems rule <- MkThm (MkHyperThm name prems rule)
+  where Hyper name prems rule = MkThm (MkHyperThm name prems rule)
+
+{-# COMPLETE Std, Hyper #-}
 
 -- A trigger represents a theorem premise that could be activated by a fact
 data TheoremTrigger = TheoremTrigger
-  { ttTheorem :: Thm                 -- The theorem
-  , ttPremiseIndex :: Int            -- Which premise (0-based)
-  , ttPremises :: [Fact]             -- All premises for this theorem
+  { ttTheorem :: Thm                           -- The theorem
+  , ttPremiseIndex :: {-# UNPACK #-} !Int      -- Which premise (0-based)
+  , ttPremises :: [Fact]                       -- All premises for this theorem
   }
 
 data Conclusion
@@ -316,16 +525,35 @@ data Conclusion
   | CDisj Disjunction
   deriving stock (Eq, Show)
 
+-- | Extract facts from a conclusion
+{-# INLINE conclusionFacts #-}
+conclusionFacts :: Conclusion -> [Fact]
+conclusionFacts (CFact f) = [f]
+conclusionFacts (CDisj (Disjunction fs)) = fs
+
 {-# INLINE thmName #-}
 thmName :: Thm -> String
-thmName (Std t) = theoremNameText (theoremName t)
-thmName (Hyper t) = theoremNameText (hyperName t)
+thmName (Std name _ _) = theoremNameText name
+thmName (Hyper name _ _) = theoremNameText name
 
+{-# INLINE thmId #-}
 thmId :: Thm -> TheoremName
-thmId (Std t) = theoremName t
-thmId (Hyper t) = hyperName t
+thmId (Std name _ _) = name
+thmId (Hyper name _ _) = name
 
 {-# INLINE thmFacts #-}
 thmFacts :: Thm -> [Fact]
-thmFacts (Std t) = theoremFacts t
-thmFacts (Hyper t) = hyperFacts t
+thmFacts (Std _ prems _) = prems
+thmFacts (Hyper _ prems _) = prems
+
+-- | Get static conclusions from a standard theorem (Nothing for hyper-theorems)
+{-# INLINE thmConcs #-}
+thmConcs :: Thm -> Maybe [Fact]
+thmConcs (Std _ _ concs) = Just concs
+thmConcs (Hyper _ _ _) = Nothing
+
+-- | Get the rule function from a hyper-theorem (Nothing for standard theorems)
+{-# INLINE thmRule #-}
+thmRule :: Thm -> Maybe ([Fact] -> Maybe [Conclusion])
+thmRule (Std _ _ _) = Nothing
+thmRule (Hyper _ _ rule) = Just rule

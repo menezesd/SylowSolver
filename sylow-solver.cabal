@@ -9,9 +9,7 @@ common common-deps
                      , unordered-containers
                      , hashable
                      , mtl
-                     , microlens
-                     , microlens-mtl
-                     , microlens-th
+                     , dlist
   default-language:    Haskell2010
   ghc-options:         -Wall
                        -Wextra
@@ -20,6 +18,9 @@ common common-deps
                        -Wincomplete-uni-patterns
                        -Werror
                        -O2
+                       -funfolding-use-threshold=16
+                       -fspec-constr-recursive=3
+                       -flate-specialise
 
 library
   import:              common-deps
@@ -31,7 +32,6 @@ library
                      , Environment.Builders
                      , Environment.Goals
                      , Environment.Labels
-                     , Environment.Lenses
                      , Environment.Symbols
                      , Environment.Types
                      , Environment.Variables
@@ -42,6 +42,7 @@ library
                      , Predicates
                      , ProofMonad
                      , ProofTrace
+                     , ProofTree
                      , Theorems
                      , Theorems.Common
                      , Theorems.Counting

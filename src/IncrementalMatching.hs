@@ -13,93 +13,128 @@
 --   3. Return all complete matches as (theorem, matched-facts) pairs
 --
 module IncrementalMatching
-  ( findTriggeredMatches
+  ( -- * ProofEnvironment-based matching (convenience wrappers)
+    findTriggeredMatches
   , matchFactsToTemplate
   , matchPremises
   , matchPremisesWithSubst
+    -- * Pure matching on fact index (for profiling/testing)
+  , FactIndex
+  , findTriggeredMatchesPure
+  , matchFactsToTemplatePure
+  , matchPremisesPure
+  , matchPremisesWithSubstPure
   ) where
 
 import Core
+import Data.Foldable (toList)
 import Data.List (foldl')
 import Data.Hashable (hash)
-import Environment.Types (TriggerIndex)
+import Data.IntMap.Strict (IntMap)
+import Data.Sequence (Seq, (|>))
+import Environment.Types (TriggerIndex, peFactIndex)
 import qualified Data.Map.Strict as Map
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.IntMap.Strict as IntMap
+import qualified Data.Sequence as Seq
 import Env
-import Environment.Types (peFactIndex)
 import Unification
 
--- For a new fact, find all theorems that could be triggered
--- Returns list of (theorem, complete match) pairs
-findTriggeredMatches :: ProofEnvironment -> FactEntry -> TriggerIndex -> [(Thm, [FactEntry])]
-findTriggeredMatches env newFact triggerIndex =
-  let fact = feFact newFact
-      key = factKey fact
-      triggers = HashMap.lookupDefault [] key triggerIndex
+-- | Type alias for the fact index used in matching
+type FactIndex = IntMap [FactEntry]
 
-      -- For each trigger, try to complete the match
+-- | Type alias for fact sequences (used in incremental matching)
+type FactSeq = Seq FactEntry
+
+------------------------------------------------------------------------
+-- Pure matching functions (for profiling and deterministic tests)
+------------------------------------------------------------------------
+
+-- | Pure version: find all theorems triggered by a new fact
+findTriggeredMatchesPure :: FactIndex -> FactEntry -> TriggerIndex -> [(Thm, [FactEntry])]
+findTriggeredMatchesPure factIdx newFact triggerIndex =
+  let key = factKey (feFact newFact)
+      triggers = HashMap.lookupDefault [] key triggerIndex
       tryTrigger trigger =
         let premises = ttPremises trigger
             triggerIdx = ttPremiseIndex trigger
             thm = ttTheorem trigger
-
-            -- Try to match the new fact at position triggerIdx
-            matchResults = matchNewFactAtPosition env newFact premises triggerIdx
+            matchResults = matchNewFactAtPositionPure factIdx newFact premises triggerIdx
          in [(thm, match) | match <- matchResults]
-
    in concatMap tryTrigger triggers
 
--- Match premises with a specific fact at a given position
--- Returns list of complete matches where all premises are satisfied
-matchNewFactAtPosition :: ProofEnvironment -> FactEntry -> [Fact] -> Int -> [[FactEntry]]
-matchNewFactAtPosition env newFact premises targetIdx
+-- | Pure helper: match premises with a specific fact at a given position
+matchNewFactAtPositionPure :: FactIndex -> FactEntry -> [Fact] -> Int -> [[FactEntry]]
+matchNewFactAtPositionPure factIdx newFact premises targetIdx
   | targetIdx < 0 || targetIdx >= length premises = []
   | otherwise =
-      let -- Split premises: before target, target itself, after target
-          (beforePremises, targetAndAfter) = splitAt targetIdx premises
+      let (beforePremises, targetAndAfter) = splitAt targetIdx premises
        in case targetAndAfter of
-            [] -> []  -- Safety: shouldn't happen due to bounds check, but handle gracefully
+            [] -> []
             (targetPremise : afterPremises) ->
-              -- Try to unify the new fact with the target premise
               let fact = feFact newFact
                in case unifyFact Map.empty targetPremise fact of
                     Left _ -> []
                     Right subst ->
-                      [ matchedFacts
-                      | (substBefore, beforeFacts) <- matchPremisesWithSubst env subst [] beforePremises
-                      , (_substAfter, fullFacts) <- matchPremisesWithSubst env substBefore (beforeFacts ++ [newFact]) afterPremises
-                      , let matchedFacts = fullFacts
+                      [ toList fullFacts
+                      | (substBefore, beforeFacts) <- matchPremisesWithSubstSeq factIdx subst Seq.empty beforePremises
+                      , (_substAfter, fullFacts) <- matchPremisesWithSubstSeq factIdx substBefore (beforeFacts |> newFact) afterPremises
                       ]
 
--- Match a template fact against existing facts with an initial substitution
-{-# INLINE matchFactsToTemplate #-}
-matchFactsToTemplate :: Fact -> ProofEnvironment -> Substitution -> [(FactEntry, Substitution)]
-matchFactsToTemplate template env initMap =
-  let candidateFacts =
-        IntMap.findWithDefault [] (hash template) (peFactIndex env)
+-- | Pure version: match a template fact against indexed facts
+{-# INLINE matchFactsToTemplatePure #-}
+matchFactsToTemplatePure :: FactIndex -> Fact -> Substitution -> [(FactEntry, Substitution)]
+matchFactsToTemplatePure factIdx template initMap =
+  let templateKey = factKey template
+      candidateFacts = IntMap.findWithDefault [] (hash template) factIdx
    in [ (factEntry, matchMap)
       | factEntry <- candidateFacts
-      , factKey (feFact factEntry) == factKey template
-      , let fact = feFact factEntry
-      , Right matchMap <- [unifyFact initMap template fact]
+      , factKey (feFact factEntry) == templateKey
+      , Right matchMap <- [unifyFact initMap template (feFact factEntry)]
       ]
 
--- Match a sequence of premises, threading substitution and accumulating matched facts.
--- Returns all possible matches alongside the final substitution.
-matchPremisesWithSubst :: ProofEnvironment -> Substitution -> [FactEntry] -> [Fact] -> [(Substitution, [FactEntry])]
-matchPremisesWithSubst env initSubst seedFacts templates =
+-- | Internal Seq-based matching for O(1) snoc
+matchPremisesWithSubstSeq :: FactIndex -> Substitution -> FactSeq -> [Fact] -> [(Substitution, FactSeq)]
+matchPremisesWithSubstSeq factIdx initSubst seedFacts templates =
   foldl' step [(initSubst, seedFacts)] templates
   where
     step acc template =
-      [ (subst', facts ++ [factEntry])
+      [ (subst', facts |> factEntry)
       | (subst, facts) <- acc
-      , (factEntry, subst') <- matchFactsToTemplate template env subst
+      , (factEntry, subst') <- matchFactsToTemplatePure factIdx template subst
       ]
 
--- Convenience wrapper when the caller does not care about the final substitution.
-matchPremises :: ProofEnvironment -> [Fact] -> [[FactEntry]]
-matchPremises env templates =
-  [ facts
-  | (_subst, facts) <- matchPremisesWithSubst env Map.empty [] templates
+-- | Pure version: match a sequence of premises
+matchPremisesWithSubstPure :: FactIndex -> Substitution -> [FactEntry] -> [Fact] -> [(Substitution, [FactEntry])]
+matchPremisesWithSubstPure factIdx initSubst seedFacts templates =
+  [ (subst, toList facts)
+  | (subst, facts) <- matchPremisesWithSubstSeq factIdx initSubst (Seq.fromList seedFacts) templates
   ]
+
+-- | Pure version: convenience wrapper without final substitution
+matchPremisesPure :: FactIndex -> [Fact] -> [[FactEntry]]
+matchPremisesPure factIdx templates =
+  [ facts
+  | (_subst, facts) <- matchPremisesWithSubstPure factIdx Map.empty [] templates
+  ]
+
+------------------------------------------------------------------------
+-- ProofEnvironment-based wrappers (convenience)
+------------------------------------------------------------------------
+
+-- | Find all theorems triggered by a new fact (convenience wrapper)
+findTriggeredMatches :: ProofEnvironment -> FactEntry -> TriggerIndex -> [(Thm, [FactEntry])]
+findTriggeredMatches env = findTriggeredMatchesPure (peFactIndex env)
+
+-- | Match a template fact against existing facts (convenience wrapper)
+{-# INLINE matchFactsToTemplate #-}
+matchFactsToTemplate :: Fact -> ProofEnvironment -> Substitution -> [(FactEntry, Substitution)]
+matchFactsToTemplate template env = matchFactsToTemplatePure (peFactIndex env) template
+
+-- | Match premises with substitution (convenience wrapper)
+matchPremisesWithSubst :: ProofEnvironment -> Substitution -> [FactEntry] -> [Fact] -> [(Substitution, [FactEntry])]
+matchPremisesWithSubst env = matchPremisesWithSubstPure (peFactIndex env)
+
+-- | Match premises (convenience wrapper)
+matchPremises :: ProofEnvironment -> [Fact] -> [[FactEntry]]
+matchPremises env = matchPremisesPure (peFactIndex env)

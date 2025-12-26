@@ -104,13 +104,15 @@ embedInAn = hyper "embed_An"
 ruleAlternatingOrder :: [Fact] -> Maybe [Conclusion]
 ruleAlternatingOrder [factAlt] = do
   (aArg, n) <- withNum2 factAlt (,)
-  let a = argText aArg
-      factorial' :: Integer -> Integer
-      factorial' m = foldl' (*) 1 [1 .. m]
-      orderVal
-        | n == 1 = 1
-        | otherwise = factorial' (fromIntegral n) `div` 2
-  Just [CFact (order (sym a) (num (fromInteger orderVal)))]
+  -- Skip very large n to avoid computing huge factorials
+  if n > 100 then Nothing else do
+    let a = argText aArg
+        factorial' :: Integer -> Integer
+        factorial' m = foldl' (*) 1 [1 .. m]
+        orderVal
+          | n == 1 = 1
+          | otherwise = factorial' (fromIntegral n) `div` 2
+    Just [CFact (order (sym a) (num (fromInteger orderVal)))]
 ruleAlternatingOrder _ = Nothing
 
 alternatingOrder :: Thm
@@ -138,7 +140,8 @@ dividesContradiction = hyper "divides_contradiction"
 ruleAlternatingSimple :: [Fact] -> Maybe [Conclusion]
 ruleAlternatingSimple [factAlt] = do
   (aArg, n) <- withNum2 factAlt (,)
-  if n >= 5 then Just [CFact (simple (sym (argText aArg)))] else Nothing
+  -- Skip very large n (we can't meaningfully reason about them)
+  if n >= 5 && n <= 100 then Just [CFact (simple (sym (argText aArg)))] else Nothing
 ruleAlternatingSimple _ = Nothing
 
 alternatingSimple :: Thm

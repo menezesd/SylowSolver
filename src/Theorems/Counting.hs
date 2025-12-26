@@ -7,6 +7,7 @@ module Theorems.Counting
   , ruleOutMaxIntersections
   ) where
 
+import Control.Monad (guard)
 import Core
 import Predicates
 import Theorems.Common (arg2, arg3, asNum, guardList, hyper, stdThm, withArg2Num, withArg3Num)
@@ -40,13 +41,8 @@ ruleCountingContradiction [fact1, fact2, factOrder] = do
   n <- withArg2Num factOrder (\_ total -> total)
   p1 <- asNum p1Arg
   p2 <- asNum p2Arg
-  guard (p1 /= p2)
-  if n1 + n2 + 1 > n
-    then Just [CFact falseFact]
-    else Nothing
-  where
-    guard False = Nothing
-    guard True = Just ()
+  guard (p1 /= p2 && n1 + n2 + 1 > n)
+  pure [CFact falseFact]
 ruleCountingContradiction _ = Nothing
 
 countingContradiction :: Thm

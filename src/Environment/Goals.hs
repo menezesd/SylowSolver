@@ -5,7 +5,8 @@ module Environment.Goals
 
 import Core
 import Environment.Types
-import qualified Data.Map.Strict as Map
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Set as Set
 
 -- | Update goal achieved status based on disjunction coverage.
@@ -20,11 +21,11 @@ updateGoalAchieved env
     observed = peGoalDisCombos env
     observedIds = Set.map fst (Set.unions observed)
 
-    -- Current disjunction sizes for observed disjunctions
-    currentSizes :: Map.Map DisjId Int
+    -- Current disjunction sizes for observed disjunctions (using IntMap for O(1) lookup)
+    currentSizes :: IntMap.IntMap Int
     currentSizes =
-      Map.fromList
-        [ (deLabel disj, length (deFacts disj))
+      IntMap.fromList
+        [ (unDisjId (deLabel disj), length (deFacts disj))
         | disj <- peDisjunctions env
         , Set.member (deLabel disj) observedIds
         ]
@@ -39,11 +40,11 @@ updateGoalAchieved env
            in (combos, updateGoalState (\gs -> gs { gsCachedDisjSizes = currentSizes, gsCachedCombos = combos }) env)
 
     -- Generate all possible combinations of branches
-    buildAllCombinations :: Map.Map DisjId Int -> [Set.Set (DisjId, Int)]
+    buildAllCombinations :: IntMap.IntMap Int -> [Set.Set (DisjId, Int)]
     buildAllCombinations sizes =
       let branchChoices =
-            [ [(d, i) | i <- [0 .. size - 1]]
-            | (d, size) <- Map.toList sizes
+            [ [(DisjId d, i) | i <- [0 .. size - 1]]
+            | (d, size) <- IntMap.toList sizes
             , size > 0
             ]
        in map Set.fromList (sequence branchChoices)
@@ -57,11 +58,11 @@ updateGoalAchieved env
 -- Mark a fact and its dependencies as useful
 updateUseful :: Label -> ProofEnvironment -> ProofEnvironment
 updateUseful lbl env =
-  case Map.lookup lbl (peFactLabels env) of
+  case HashMap.lookup lbl (peFactLabels env) of
     Just (LFactEntry fe)
       | feUseful fe -> env
       | otherwise ->
           let fe' = fe {feUseful = True}
-              env' = updateFactDB (\db -> db { fdFactLabels = Map.insert lbl (LFactEntry fe') (fdFactLabels db) }) env
+              env' = updateFactDB (\db -> db { fdFactLabels = HashMap.insert lbl (LFactEntry fe') (fdFactLabels db) }) env
            in foldl (flip updateUseful) env' (feDependencies fe)
     _ -> env

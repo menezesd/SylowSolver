@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+
 module Environment.Symbols
   ( SymbolTable
   , generateNewSymbol
@@ -5,66 +7,70 @@ module Environment.Symbols
   , internSymbol
   , symbolTable
   , lookupSymbolName
+  , registerSymbol
   ) where
 
 import Core
 import Environment.Types
 import qualified Data.Map.Strict as Map
 import qualified Data.IntMap.Strict as IntMap
-import qualified Data.Set as Set
 
 type SymbolTable = IntMap.IntMap String
 
 -- | Core symbol generation logic (pure).
--- Given current letter, suffix, and set of used symbols,
+-- Given current letter, suffix, and map of used symbols,
 -- returns (newSymbol, nextLetter, nextSuffix).
-nextSymbol :: Char -> Int -> Set.Set String -> (String, Char, Int)
+nextSymbol :: Char -> Int -> Map.Map String a -> (String, Char, Int)
 nextSymbol curLetter curSuffix usedSymbols =
   let suffix = if curSuffix == 0 then "" else show curSuffix
       symTxt = curLetter : suffix
-      nextLetter = if curLetter == 'Z' then 'A' else succ curLetter
-      nextSuffix = if curLetter == 'Z' then curSuffix + 1 else curSuffix
-   in if Set.member symTxt usedSymbols
-        then nextSymbol nextLetter nextSuffix usedSymbols
-        else (symTxt, nextLetter, nextSuffix)
+      nextLetter' = if curLetter == 'Z' then 'A' else succ curLetter
+      nextSuffix' = if curLetter == 'Z' then curSuffix + 1 else curSuffix
+   in if Map.member symTxt usedSymbols
+        then nextSymbol nextLetter' nextSuffix' usedSymbols
+        else (symTxt, nextLetter', nextSuffix')
+
+-- | Register a symbol in the generator state.
+-- Updates symbol table, symbol names, and increments the next ID.
+{-# INLINE registerSymbol #-}
+registerSymbol :: Symbol -> GeneratorState -> GeneratorState
+registerSymbol symVal gs@GeneratorState{..} =
+  let name = symbolName symVal
+      sid = unSymbolId (symbolId symVal)
+  in gs
+    { gsSymbolTable = Map.insert name symVal gsSymbolTable
+    , gsSymbolNames = IntMap.insert sid name gsSymbolNames
+    , gsNextSymbolId = SymbolId (sid + 1)
+    }
 
 -- | Generate a new unique symbol in the environment.
 generateNewSymbol :: ProofEnvironment -> (Symbol, ProofEnvironment)
 generateNewSymbol env =
   let (symTxt, nextLetter, nextSuffix) =
-        nextSymbol (peCurLetter env) (peCurSuffix env) (peSymbolSet env)
-      symVal = Symbol (peNextSymbolId env) symTxt
+        nextSymbol (peCurLetter env) (peCurSuffix env) (peSymbolTable env)
+      symId = peNextSymbolId env
+      symVal = Symbol symId symTxt
       env' = updateGenState
-               (\gs ->
-                 gs
+               (\gs -> (registerSymbol symVal gs)
                    { gsCurLetter = nextLetter
                    , gsCurSuffix = nextSuffix
-                   , gsSymbolSet = Set.insert symTxt (gsSymbolSet gs)
-                   , gsSymbolTable = Map.insert symTxt symVal (gsSymbolTable gs)
-                   , gsSymbolNames = IntMap.insert (unSymbol symVal) symTxt (gsSymbolNames gs)
-                   , gsNextSymbolId = gsNextSymbolId gs + 1
                    })
                env
    in (symVal, env')
 
 -- | Pure helper to intern or create a symbol given its name.
+-- If symbol exists, return it without any state updates (optimization).
+-- If new, batch all updates in a single updateGenState call.
 internSymbol :: String -> ProofEnvironment -> (Symbol, ProofEnvironment)
 internSymbol s env =
   case Map.lookup s (peSymbolTable env) of
-    Just symFound ->
-      let env' = updateGenState
-                   (\gs -> gs { gsSymbolSet = Set.insert s (gsSymbolSet gs) })
-                   env
-       in (symFound, env')
+    Just symFound -> (symFound, env)  -- Already registered, no updates needed
     Nothing ->
-      let symNew = Symbol (peNextSymbolId env) s
+      let symId = peNextSymbolId env
+          symNew = Symbol symId s
           env' = updateGenState
-                   (\gs ->
-                     gs { gsSymbolTable = Map.insert s symNew (gsSymbolTable gs)
-                        , gsSymbolSet = Set.insert s (gsSymbolSet gs)
-                        , gsSymbolNames = IntMap.insert (unSymbol symNew) s (gsSymbolNames gs)
-                        , gsNextSymbolId = gsNextSymbolId gs + 1
-                        , gsStats = (gsStats gs) { esSymbols = esSymbols (gsStats gs) + 1 }
+                   (\gs -> (registerSymbol symNew gs)
+                        { gsStats = (gsStats gs) { esSymbols = esSymbols (gsStats gs) + 1 }
                         })
                    env
        in (symNew, env')

@@ -27,6 +27,8 @@ module Env
   , peFacts
   , peDisjunctions
   , peGoalAchieved
+  , peTriggerIndex
+  , peFactDB
   ) where
 
 import Environment.Types

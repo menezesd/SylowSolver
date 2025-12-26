@@ -1,6 +1,7 @@
 module Environment.Variables
   ( replaceVariables
   , replaceVariablesM
+  , hasFreshVars
   ) where
 
 import Core
@@ -20,11 +21,8 @@ replaceVariablesM concs = do
     buildSubstM = foldM collectFreshVars Map.empty
 
     collectFreshVars :: Map String Symbol -> NewConclusion -> ProofM (Map String Symbol)
-    collectFreshVars subst nc = do
-      let factList = case ncConclusion nc of
-            CFact f -> [f]
-            CDisj (Disjunction fs) -> fs
-      foldM (processFactForFresh) subst factList
+    collectFreshVars subst nc =
+      foldM processFactForFresh subst (conclusionFacts (ncConclusion nc))
 
     processFactForFresh :: Map String Symbol -> Fact -> ProofM (Map String Symbol)
     processFactForFresh subst (Fact _ args) =
@@ -63,3 +61,15 @@ replaceVariables :: ProofEnvironment -> [NewConclusion] -> (ProofEnvironment, [N
 replaceVariables env concs =
   let (concs', env') = runProofM (replaceVariablesM concs) env
    in (env', concs')
+
+-- | Check if any conclusions contain Fresh variables
+-- Used to skip replaceVariables when not needed
+hasFreshVars :: [NewConclusion] -> Bool
+hasFreshVars = any hasFreshInConc
+  where
+    hasFreshInConc nc = any hasFreshInFact (conclusionFacts (ncConclusion nc))
+
+    hasFreshInFact (Fact _ args) = any isFresh args
+
+    isFresh (Fresh _) = True
+    isFresh _ = False

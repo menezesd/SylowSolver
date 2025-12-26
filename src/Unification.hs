@@ -9,6 +9,20 @@
 --
 -- Substitutions map variable names to their bound string values.
 --
+-- == Error Handling Strategy
+--
+-- This module uses 'Either UnificationError' for explicit error reporting.
+-- Errors include:
+--
+--   * 'NameMismatch': Predicate names don't match
+--   * 'ArityMismatch': Different number of arguments
+--   * 'StructuralMismatch': Concrete values don't match
+--   * 'ConflictingBinding': Variable already bound to different value
+--
+-- Callers that try multiple unifications (e.g., theorem matching) typically
+-- convert errors to empty results, as unification failure is expected when
+-- probing potential matches.
+--
 module Unification
   ( Substitution
   , UnificationError(..)
@@ -103,11 +117,12 @@ unifyArg subst tArg fArg =
                 else Left (ConflictingBinding name v fArg)
 
 -- Apply standard theorem via unification
-applyStdThm :: Theorem -> [FactEntry] -> [Fact]
-applyStdThm thm facts =
-  case unifyFacts Map.empty (theoremFacts thm) (map feFact facts) of
+-- Takes premises and conclusions directly (GADT-friendly)
+applyStdThm :: [Fact] -> [Fact] -> [FactEntry] -> [Fact]
+applyStdThm premises conclusions facts =
+  case unifyFacts Map.empty premises (map feFact facts) of
     Left _ -> []
-    Right mapping -> map (applySubstToFact mapping) (theoremConcs thm)
+    Right mapping -> map (applySubstToFact mapping) conclusions
 
 -- Apply substitution to a fact
 {-# INLINE applySubstToFact #-}

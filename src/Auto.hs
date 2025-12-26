@@ -12,24 +12,33 @@
 --
 module Auto
   ( SolverConfig(..)
+  , SolverStats(..)
+  , OutputMode(..)
   , defaultConfig
   , autoSolve
   , autoSolveWith
+  , autoSolveWithStats
   , matchFactsToTheorem
   , solveOrder
+  , printHashBuckets
   ) where
 
 -- Standard library
 import Data.Foldable (toList)
-import Data.List (foldl')
-import Data.Sequence ((|>))
+import Data.List (foldl', sortOn)
+import Data.Maybe (listToMaybe)
 import qualified Data.Sequence as Seq
+import qualified Data.IntSet as IntSet
+import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Set as Set
+import qualified Data.DList as DL
 
 -- Local modules
 import Core
 import Env
 import EnvPrint (printRelevantFacts)
+import ProofTree (renderTree, renderClean)
+import Environment.Types (EnvStats(..), peFactIndex, BookkeepingState(..))
 import IncrementalMatching (findTriggeredMatches, matchPremises)
 import ProofMonad (runProofM)
 import Environment.FactsMonadic (applyThmM)
@@ -42,20 +51,51 @@ data SearchStatus
   | IterationLimitReached
   deriving (Eq, Show)
 
+-- | Output mode for proof display
+data OutputMode
+  = OutputClassic    -- Original verbose output
+  | OutputClean      -- Cleaner formatting with case labels (Option B)
+  | OutputTree       -- Tree visualization (Option D)
+  deriving (Eq, Show)
+
 data SolverConfig = SolverConfig
   { scMaxIterations :: Int
   , scBatchSize :: Int
+  , scVerbose :: Bool           -- Print stats during/after solving
+  , scDumpHashBuckets :: Bool   -- Dump hash bucket distribution
+  , scOutputMode :: OutputMode  -- How to display the proof
   } deriving (Eq, Show)
 
 defaultConfig :: SolverConfig
-defaultConfig = SolverConfig { scMaxIterations = 1000, scBatchSize = 8 }
+defaultConfig = SolverConfig
+  { scMaxIterations = 1000
+  , scBatchSize = 8
+  , scVerbose = False
+  , scDumpHashBuckets = False
+  , scOutputMode = OutputClean  -- Use clean output by default
+  }
+
+-- | Statistics collected during solving
+data SolverStats = SolverStats
+  { ssIterations :: !Int          -- Total iterations
+  , ssQueueHighWater :: !Int      -- Maximum queue length reached
+  , ssFinalQueueLen :: !Int       -- Final queue length
+  , ssFinalEnvStats :: EnvStats   -- Final environment stats
+  } deriving (Eq, Show)
 
 data SearchState = SearchState
-  { ssEnv :: ProofEnvironment
-  , ssQueue :: Seq.Seq FactEntry
-  , ssProcessed :: Set.Set FactId
-  , ssIter :: Int
+  { ssEnv :: !ProofEnvironment    -- Strict to prevent heap accumulation
+  , ssQueue :: !(Seq.Seq FactEntry)  -- Strict sequence
+  , ssProcessed :: !IntSet.IntSet  -- Use IntSet for faster membership tests
+  , ssClosedBranches :: ![Set.Set (DisjId, Int)]  -- Branches where false() was reached
+  , ssIter :: !Int
+  , ssHighWater :: !Int           -- Track high-water mark
   }
+
+-- | Check if a fact's case context is in a closed branch
+isInClosedBranch :: Set.Set (DisjId, Int) -> [Set.Set (DisjId, Int)] -> Bool
+isInClosedBranch ancestors closedBranches =
+  any (`Set.isSubsetOf` ancestors) closedBranches
 
 matchFactsToTheorem :: [Fact] -> ProofEnvironment -> [FactEntry] -> [[FactEntry]]
 matchFactsToTheorem premises env newFacts =
@@ -70,24 +110,65 @@ autoSolve = autoSolveWith defaultConfig
 
 autoSolveWith :: SolverConfig -> ProofEnvironment -> IO Bool
 autoSolveWith cfg env0 = do
-  let initialState =
+  (success, _, _) <- autoSolveWithStats cfg env0
+  pure success
+
+-- | Solve with full stats output
+autoSolveWithStats :: SolverConfig -> ProofEnvironment -> IO (Bool, SolverStats, ProofEnvironment)
+autoSolveWithStats cfg env0 = do
+  let initialQueue = Seq.fromList (peFacts env0)
+      initialState =
         SearchState
           { ssEnv = env0
-          , ssQueue = Seq.fromList (peFacts env0)
-          , ssProcessed = Set.empty
+          , ssQueue = initialQueue
+          , ssProcessed = IntSet.empty
+          , ssClosedBranches = []
           , ssIter = 0
+          , ssHighWater = Seq.length initialQueue
           }
-      (finalEnv, status) = runSearch initialState
-  mapM_ putStrLn (printRelevantFacts finalEnv)
+      (finalSt, status) = runSearch initialState
+      finalEnv = ssEnv finalSt
+      stats = SolverStats
+        { ssIterations = ssIter finalSt
+        , ssQueueHighWater = ssHighWater finalSt
+        , ssFinalQueueLen = Seq.length (ssQueue finalSt)
+        , ssFinalEnvStats = getEnvStats finalEnv
+        }
+
+  -- Print proof trace based on output mode
+  case scOutputMode cfg of
+    OutputClassic -> mapM_ putStrLn (printRelevantFacts finalEnv)
+    OutputClean   -> mapM_ putStrLn (renderClean finalEnv)
+    OutputTree    -> mapM_ putStrLn (renderTree finalEnv)
+
+  -- Print verbose stats if enabled
+  if scVerbose cfg then do
+    putStrLn ""
+    putStrLn $ "=== Solver Statistics ==="
+    putStrLn $ "Iterations: " ++ show (ssIterations stats)
+    putStrLn $ "Queue high-water mark: " ++ show (ssQueueHighWater stats)
+    putStrLn $ "Final queue length: " ++ show (ssFinalQueueLen stats)
+    let es = ssFinalEnvStats stats
+    putStrLn $ "Facts: " ++ show (esFacts es)
+    putStrLn $ "Disjunctions: " ++ show (esDisjunctions es)
+    putStrLn $ "Symbols: " ++ show (esSymbols es)
+  else pure ()
+
+  -- Dump hash buckets if enabled
+  if scDumpHashBuckets cfg then do
+    putStrLn ""
+    printHashBuckets finalEnv
+  else pure ()
+
   putStrLn $ case status of
     GoalFound -> "SUCCESS"
     _ -> "FAILURE"
-  pure (status == GoalFound)
+  pure (status == GoalFound, stats, finalEnv)
   where
-    runSearch :: SearchState -> (ProofEnvironment, SearchStatus)
+    runSearch :: SearchState -> (SearchState, SearchStatus)
     runSearch st =
       case stepSearch st of
-        Left status -> (ssEnv st, status)
+        Left status -> (st, status)
         Right st' -> runSearch st'
 
     stepSearch :: SearchState -> Either SearchStatus SearchState
@@ -97,53 +178,90 @@ autoSolveWith cfg env0 = do
       | Seq.null queue = Left QueueExhausted
       | otherwise =
           let (batch, restQueue) = Seq.splitAt (scBatchSize cfg) queue
-              factsToProcess = [(fact, feLabel fact) | fact <- toList batch, Set.notMember (feLabel fact) processed]
+              closedBranches = ssClosedBranches st
+              -- Skip facts that are already processed OR in a closed branch
+              factsToProcess = [(fact, feLabel fact)
+                               | fact <- toList batch
+                               , let FactId fid = feLabel fact
+                               , IntSet.notMember fid processed
+                               , not (isInClosedBranch (feDisAncestors fact) closedBranches)]
            in if null factsToProcess
                 then Right st { ssQueue = restQueue, ssIter = ssIter st + 1 }
                 else
                   let (env', newFactsAll, newProcessedIds) = processBatch env factsToProcess
-                      processed' = foldl' (flip Set.insert) processed newProcessedIds
-                      newQueue = foldl' (|>) restQueue newFactsAll
+                      -- Find new closed branches (facts that are false())
+                      newClosedBranches = [feDisAncestors fe | fe <- newFactsAll
+                                          , factName (feFact fe) == PFalse]
+                      closedBranches' = newClosedBranches ++ closedBranches
+                      -- Filter out facts in newly closed branches
+                      filteredFacts = [fe | fe <- newFactsAll
+                                      , not (isInClosedBranch (feDisAncestors fe) closedBranches')]
+                      -- Batch insert using IntSet.union
+                      processed' = IntSet.union processed (IntSet.fromList newProcessedIds)
+                      -- Bulk append filtered facts
+                      newQueue = restQueue <> Seq.fromList filteredFacts
+                      newQueueLen = Seq.length newQueue
+                      newHighWater = max (ssHighWater st) newQueueLen
                    in Right
                         SearchState
                           { ssEnv = env'
                           , ssQueue = newQueue
                           , ssProcessed = processed'
+                          , ssClosedBranches = closedBranches'
                           , ssIter = ssIter st + 1
+                          , ssHighWater = newHighWater
                           }
       where
         env = ssEnv st
         queue = ssQueue st
         processed = ssProcessed st
 
-    -- Process a batch of facts
-    -- Accumulates facts in reverse order, then reverses at the end
-    processBatch env factsToProcess =
-      let (env', revNewFacts, revProcessedIds) =
-            foldl' processOneFact (env, [], []) factsToProcess
-       in (env', reverse revNewFacts, reverse revProcessedIds)
+    -- Process a batch of facts using DList for O(1) append
+    processBatch envIn factsToProcess =
+      let (env', dlNewFacts, dlProcessedIds) =
+            foldl' processOneFact (envIn, DL.empty, DL.empty) factsToProcess
+       in (env', DL.toList dlNewFacts, DL.toList dlProcessedIds)
       where
-        processOneFact (!envAcc, !allNewFactsRev, !processedIdsRev) (fact, factId) =
+        processOneFact (!envAcc, !dlFacts, !dlIds) (fact, factId) =
           let triggeredMatches = findTriggeredMatches envAcc fact (peTriggerIndex envAcc)
-              (env', newFacts) = applyMatches envAcc triggeredMatches
-              -- Prepend new facts (will reverse at end)
-           in (env', reverseOnto newFacts allNewFactsRev, factId : processedIdsRev)
+              (envOut, newFacts) = applyMatches envAcc triggeredMatches
+              FactId fid = factId
+           in (envOut, dlFacts <> DL.fromList newFacts, DL.snoc dlIds fid)
 
-    -- Apply a list of (theorem, match) pairs with strict fold
-    -- Accumulates in reverse, then reverses at the end
-    applyMatches env matches =
-      let (env', revFacts) = foldl' applyOne (env, []) matches
-       in (env', reverse revFacts)
+    -- Apply a list of (theorem, match) pairs using DList
+    applyMatches envIn matches =
+      let (env', dlFacts) = foldl' applyOne (envIn, DL.empty) matches
+       in (env', DL.toList dlFacts)
       where
-        applyOne (!envAcc, !newFactsAccRev) (thm, match) =
-          let (newFacts, env') = runProofM (applyThmM thm match) envAcc
-           in (env', reverseOnto newFacts newFactsAccRev)
+        applyOne (!envAcc, !dlFactsAcc) (thm, match) =
+          let (newFacts, envOut) = runProofM (applyThmM thm match) envAcc
+           in (envOut, dlFactsAcc <> DL.fromList newFacts)
 
-    -- Helper: reverse xs onto ys (like reverse xs ++ ys but O(n) not O(2n))
-    {-# INLINE reverseOnto #-}
-    reverseOnto :: [a] -> [a] -> [a]
-    reverseOnto [] !ys = ys
-    reverseOnto (x:xs) !ys = reverseOnto xs (x:ys)
+-- | Get stats from the environment
+getEnvStats :: ProofEnvironment -> EnvStats
+getEnvStats env =
+  let genState = bsGenState (peBook env)
+   in gsStats genState
+
+-- | Print hash bucket distribution to spot skew
+printHashBuckets :: ProofEnvironment -> IO ()
+printHashBuckets env = do
+  let factIdx = peFactIndex env
+      bucketSizes = map (\(k, vs) -> (k, length vs)) (IntMap.toList factIdx)
+      sortedBuckets = sortOn (negate . snd) bucketSizes
+      totalFacts = sum (map snd bucketSizes)
+      numBuckets = length bucketSizes
+  putStrLn "=== Hash Bucket Distribution ==="
+  putStrLn $ "Total facts: " ++ show totalFacts
+  putStrLn $ "Number of buckets: " ++ show numBuckets
+  if numBuckets > 0 then do
+    let avgPerBucket = fromIntegral totalFacts / fromIntegral numBuckets :: Double
+        maxBucket = maybe 0 snd (listToMaybe sortedBuckets)
+    putStrLn $ "Average per bucket: " ++ show avgPerBucket
+    putStrLn $ "Max bucket size: " ++ show maxBucket
+    putStrLn "Top 10 buckets (hash, size):"
+    mapM_ (\(h, sz) -> putStrLn $ "  " ++ show h ++ ": " ++ show sz) (take 10 sortedBuckets)
+  else putStrLn "  (no buckets)"
 
 -- | Convenience API to solve a simple-group-of-order-n goal with default settings.
 solveOrder :: Int -> IO Bool
