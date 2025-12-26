@@ -24,7 +24,7 @@ The core logic is distributed across the following Python files:
 \begin{tabular}{ll}
 \texttt{auto2.py} & Command-line entrypoint for running the solver interactively or in batch. \\
 \texttt{sylow2.py} & Utility functions for number theory, such as primality tests, prime factorization, and Sylow p-subgroup calculations. \\
-\texttt{sylow\_solver/} & Solver package: fact/disjunction data structures, theorem base classes, proof search engine, default theorems, predicates, and config/logging helpers.\end{tabular}
+\texttt{sylow\_solver/} & Solver package: facts/disjunctions, substitution helper, theorem base classes (with precompiled arg patterns), proof search engine, default theorems, predicates, and config/logging helpers.\end{tabular}
     \caption{Python Modules}
     \label{tab:python_modules}
 \end{table}
@@ -71,6 +71,9 @@ Strings in templates that start with an asterisk (e.g., \texttt{*1}) indicate th
 
 \subsection{Numeric Arguments}
 Numeric arguments (integers) are typically passed as strings in facts and templates, and then converted to their integer representation when needed for arithmetic operations or comparisons within theorem rules. For example, in a fact representing an order like \texttt{(order, G, "12")}, "12" is a string that can be parsed as an integer by the theorem logic. While the internal `Fact` representation allows for direct integer types, the external input and template matching often involve string representations of numbers.
+
+\subsection{Substitutions and Matching}
+Unification and theorem matching use a lightweight \texttt{Substitution} helper (a thin wrapper around the binding map) with convenience constructors and copy operations. Theorem premises precompile their argument patterns so matching avoids repeated prefix checks. Fact lookups are indexed by (predicate, arity) to reduce scanning.
 
 \section{Theorem Set}
 The Python implementation includes a set of theorems mirroring standard Sylow-based reasoning, similar to the Haskell version. These theorems are defined within `sylow\_solver/theorems.py` (with number-theoretic helpers in `sylow2.py`) and cover:

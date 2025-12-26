@@ -35,8 +35,6 @@ The code is split into focused modules:
 \texttt{src/NumberTheory.hs} & Primes, divisors, and factorization helpers \\
 
 \texttt{app/Main.hs} & CLI entry point (interactive and batch) \\
-\texttt{src/ConclusionDSL.hs} & A DSL for defining conclusions in a more structured way. \\
-\texttt{src/DomainTypes.hs} & Defines core data types for the problem domain. \\
 \texttt{src/IncrementalMatching.hs} & Logic for incremental matching of facts to theorem premises. \\
 \texttt{src/Memoization.hs} & Implements memoization strategies for performance optimization. \\
 \texttt{src/ProofMonad.hs} & Monadic structures for managing proof state and operations. \\
@@ -49,7 +47,7 @@ The code is split into focused modules:
 \texttt{src/Environment/Goals.hs} & Manages proof goals. \\
 \texttt{src/Environment/Labels.hs} & Handles labeling of facts and disjunctions. \\
 \texttt{src/Environment/Lenses.hs} & Defines lenses for ergonomic access to environment state. \\
-\texttt{src/Environment/Symbols.hs} & Manages symbols used in the proof. \\
+\texttt{src/Environment/Symbols.hs} & Manages symbols and symbol-table-based pretty printers. \\
 \texttt{src/Environment/Types.hs} & Defines types specific to the proof environment. \\
 \texttt{src/Environment/Variables.hs} & Manages variables in the proof context.
 \end{tabular}
@@ -106,6 +104,11 @@ symbols and requires \texttt{Exact} to match literally. After a theorem
 fires, any \texttt{Fresh} arguments are replaced with globally fresh
 symbols so that new objects do not collide with existing names.
 
+Substitutions are wrapped in a \texttt{Substitution} newtype rather than raw
+maps. Helpers such as \texttt{emptySubstitution}, \texttt{singletonSubst},
+and \texttt{substFromList} build substitutions, while \texttt{applySubstToArg}
+and \texttt{applySubstToFact} apply them.
+
 \section{Disjunction Handling}
 Disjunctions represent logical \textit{or} at the fact level. When a
 disjunction is produced, each branch is added as a fact, and each such
@@ -154,5 +157,9 @@ texts such as:
 \item Dummit and Foote, \textit{Abstract Algebra}
 \item Isaacs, \textit{Finite Group Theory}
 \end{itemize}
+
+Symbols are rendered via a \texttt{SymbolTable} (extracted from the environment)
+and the symbol-aware pretty printers \texttt{ppArgWithSymbols} and
+\texttt{ppFactWithSymbols}, re-exported through \texttt{Env} for convenience.
 
 \end{document}

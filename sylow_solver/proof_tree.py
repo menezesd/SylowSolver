@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple
 
 if TYPE_CHECKING:
     from .facts import Disjunction, Fact
@@ -105,25 +105,22 @@ def build_proof_tree(
     disj_meta: Dict[str, DisjMeta],
 ) -> ProofTree:
     """Build a proof tree from the environment facts."""
-    return _build_tree(disj_meta, set(), facts)
+    grouped: Dict[frozenset[Tuple[str, int]], List["Fact"]] = {}
+    for fact in facts:
+        key = frozenset(fact.dis_ancestors)
+        grouped.setdefault(key, []).append(fact)
+    return _build_tree(disj_meta, frozenset(), grouped)
 
 
 def _build_tree(
     meta_map: Dict[str, DisjMeta],
-    current_case: Set[Tuple[str, int]],
-    all_facts: List["Fact"],
+    current_case: frozenset[Tuple[str, int]],
+    grouped_facts: Dict[frozenset[Tuple[str, int]], List["Fact"]],
 ) -> ProofTree:
     """Build tree recursively, grouping by case context."""
-    if not all_facts:
+    matching = grouped.get(current_case, [])
+    if not matching and len(grouped) == 0:
         return ProofTree(kind="empty")
-
-    matching = []
-    rest = []
-    for fe in all_facts:
-        if fe.dis_ancestors == current_case:
-            matching.append(fe)
-        else:
-            rest.append(fe)
 
     fact_infos = [
         FactInfo(
@@ -145,7 +142,7 @@ def _build_tree(
             result = ProofTree(kind="fact", fact_info=fi, next_tree=result)
         return result
 
-    next_split = _find_next_split(current_case, rest)
+    next_split = _find_next_split(current_case, grouped_facts)
     if next_split is None:
         result = ProofTree(kind="empty")
         for fi in reversed(fact_infos):
@@ -157,9 +154,8 @@ def _build_tree(
 
     case_branches = []
     for idx, label in enumerate(meta.branch_values):
-        new_case = current_case | {(disj_id, idx)}
-        branch_facts = [fe for fe in rest if new_case.issubset(fe.dis_ancestors)]
-        subtree = _build_tree(meta_map, new_case, branch_facts)
+        new_case = frozenset(tuple(current_case | {(disj_id, idx)}))
+        subtree = _build_tree(meta_map, new_case, grouped_facts)
         case_branches.append(CaseBranch(disj_id, idx, label, subtree))
 
     result = ProofTree(
@@ -174,13 +170,15 @@ def _build_tree(
 
 
 def _find_next_split(
-    current_case: Set[Tuple[str, int]], facts: List["Fact"]
+    current_case: frozenset[Tuple[str, int]], grouped_facts: Dict[frozenset[Tuple[str, int]], List["Fact"]]
 ) -> Optional[Tuple[str, List[int]]]:
     """Find the next case split point."""
-    extensions = []
-    for fe in facts:
-        anc = fe.dis_ancestors
-        for d, i in anc - current_case:
+    extensions: List[Tuple[str, int]] = []
+    for anc in grouped_facts.keys():
+        if not current_case.issubset(anc):
+            continue
+        diff = anc - current_case
+        for d, i in diff:
             extensions.append((d, i))
 
     if not extensions:

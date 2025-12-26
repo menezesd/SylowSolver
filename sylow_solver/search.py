@@ -9,6 +9,7 @@ from .config import DEFAULT_CONFIG, OutputMode, SolverConfig
 from .facts import Disjunction, DisjunctionKey, Fact
 from .proof_tree import DisjMeta, infer_disj_meta, render_clean, render_tree
 from .theorem_base import HyperTheorem, Theorem
+from .substitution import Substitution
 
 
 class ProofEnvironment:
@@ -30,6 +31,7 @@ class ProofEnvironment:
     ):
         self.ordered_fact_list: List[str] = []  # fact labels in order of appearance
         self.facts: List[Fact] = []
+        self.facts_by_key: Dict[Tuple[str, int], List[Fact]] = {}
         self.theorems = theorems
         self.theorem_name_dict = theorem_name_dict
         self.disjunctions: List[Disjunction] = []
@@ -39,10 +41,12 @@ class ProofEnvironment:
         self.goal_dis_combos: List[Set[Tuple[str, int]]] = []
         self.fact_labels: Dict[str, Union[Fact, Disjunction]] = {}
         self.disj_meta: Dict[str, DisjMeta] = {}
+        self.disj_branch_counts: Dict[str, int] = {}
         self.cur_fact_num = 0
         self.cur_letter = "A"
         self.cur_suffix = 0
         self.symbol_set: Set[str] = set()
+        self.symbol_queue: List[str] = []
         self.config = config or DEFAULT_CONFIG
         self.logger = logger or logging.getLogger(__name__)
 
@@ -51,6 +55,7 @@ class ProofEnvironment:
         for fact in self.facts:
             for sym in fact.args:
                 self.symbol_set.add(sym)
+            self._index_fact(fact)
 
     def new_label(self, letter: str = "F") -> str:
         label = letter + str(self.cur_fact_num)
@@ -61,11 +66,17 @@ class ProofEnvironment:
         """
         Check if the goal has been achieved across all disjunction branches.
         """
+        if not self.goal_dis_combos:
+            return
         dis_labels = {D for D, _ in set.union(*(self.goal_dis_combos))}
         disj_branch_counts = []
         for label in dis_labels:
-            disjunction = cast(Disjunction, self.fact_labels[label])
-            disj_branch_counts.append((label, len(disjunction.facts)))
+            count = self.disj_branch_counts.get(label)
+            if count is None:
+                disjunction = cast(Disjunction, self.fact_labels[label])
+                count = len(disjunction.facts)
+                self.disj_branch_counts[label] = count
+            disj_branch_counts.append((label, count))
 
         branch_choices = [
             [(label, i) for i in range(count)]
@@ -107,6 +118,10 @@ class ProofEnvironment:
                 self.fact_labels[new_label] = fact
                 fact.label = new_label
                 self.facts.append(fact)
+                self._index_fact(fact)
+                for sym in fact.args:
+                    if isinstance(sym, str):
+                        self.symbol_set.add(sym)
 
                 if fact == self.goal:
                     self.goal_dis_combos.append(fact.dis_ancestors)
@@ -125,6 +140,7 @@ class ProofEnvironment:
                     self.disjunctions.append(fact)
                     self.disj_labels[disj_key] = new_label
                     self.disj_meta[new_label] = infer_disj_meta(fact)
+                    self.disj_branch_counts[new_label] = len(fact.facts)
 
                 self._process_disjunction_subfacts(fact)
                 self.add_new_facts(list(fact.facts))
@@ -133,6 +149,10 @@ class ProofEnvironment:
                 raise ValueError("Fact or disjunction missing label after insertion")
             self.ordered_fact_list.append(fact.label)
 
+    def _index_fact(self, fact: Fact) -> None:
+        key = (fact.name, len(fact.args))
+        self.facts_by_key.setdefault(key, []).append(fact)
+
     def apply_std_thm(
         self, thm: Theorem, facts: List[Fact]
     ) -> Optional[List[Fact]]:
@@ -140,24 +160,24 @@ class ProofEnvironment:
         if len(facts) != len(thm.facts):
             return None
 
-        matching: Dict[str, Any] = {}
-        for in_fact, thm_fact in zip(facts, thm.facts):
+        matching = Substitution.empty()
+        for in_fact, thm_fact, compiled in zip(facts, thm.facts, thm.compiled_patterns):
             if in_fact.name != thm_fact.name:
                 return None
             if len(in_fact.args) != len(thm_fact.args):
                 return None
 
-            for in_arg, thm_arg in zip(in_fact.args, thm_fact.args):
-                if isinstance(thm_arg, str) and thm_arg.startswith("*"):
-                    if in_arg != thm_arg[1:]:
+            for in_arg, (kind, value) in zip(in_fact.args, compiled):
+                if kind == "star":
+                    if in_arg != value:
                         return None
                     continue
 
-                if thm_arg in matching:
-                    if matching[thm_arg] != in_arg:
+                if value in matching:
+                    if matching[value] != in_arg:
                         return None
                 else:
-                    matching[thm_arg] = in_arg
+                    matching.insert(value, in_arg)
 
         conclusions = []
         for conc in thm.conclusions:
@@ -174,10 +194,8 @@ class ProofEnvironment:
     ) -> Optional[List[Union[Fact, Disjunction]]]:
         """Apply a theorem or hyper-theorem and add conclusions to the environment."""
         used_disjunction_facts = set.union(*[f.dis_ancestors for f in facts]) if facts else set()
-        used_disjunction_dict = dict(used_disjunction_facts)
-        for disj_label, branch_idx in used_disjunction_facts:
-            if used_disjunction_dict[disj_label] != branch_idx:
-                return None
+        if len(used_disjunction_facts) != len({d for d, _ in used_disjunction_facts}):
+            return None
 
         if isinstance(thm, Theorem):
             new_facts = self.apply_std_thm(thm, facts)
@@ -231,9 +249,18 @@ class ProofEnvironment:
 
     def generate_new_symbol(self) -> str:
         """Produce a new unique symbol."""
-        while True:
+        if not self.symbol_queue:
+            self.symbol_queue = self._batch_generate_symbols(64)
+        new_symbol = self.symbol_queue.pop()
+        self.symbol_set.add(new_symbol)
+        return new_symbol
+
+    def _batch_generate_symbols(self, count: int) -> List[str]:
+        """Precompute a batch of symbols to reduce loop overhead."""
+        generated: List[str] = []
+        while len(generated) < count:
             suffix = "" if self.cur_suffix == 0 else str(self.cur_suffix)
-            new_symbol = self.cur_letter + suffix
+            candidate = self.cur_letter + suffix
 
             if self.cur_letter == "Z":
                 self.cur_letter = "A"
@@ -241,9 +268,11 @@ class ProofEnvironment:
             else:
                 self.cur_letter = chr(ord(self.cur_letter) + 1)
 
-            if new_symbol not in self.symbol_set:
-                self.symbol_set.add(new_symbol)
-                return new_symbol
+            if candidate in self.symbol_set:
+                continue
+            generated.append(candidate)
+        generated.reverse()
+        return generated
 
     def print_relevant_facts(self) -> None:
         for fact_lbl in self.ordered_fact_list:
@@ -352,12 +381,12 @@ def match_facts_to_theorem(
         new_facts = facts
 
     cur_matches: List[List[Fact]] = [[]]
-    dicts: List[Dict[str, Any]] = [{}]
+    dicts: List[Substitution] = [Substitution.empty()]
     uses_new_list: List[bool] = [False]
 
     for premise in thm_facts:
         new_cur_matches: List[List[Fact]] = []
-        new_dicts: List[Dict[str, Any]] = []
+        new_dicts: List[Substitution] = []
         new_uses_new_list: List[bool] = []
 
         for match, match_dict, uses_new in zip(cur_matches, dicts, uses_new_list):
@@ -379,14 +408,14 @@ def match_facts_to_theorem(
 def match_facts_to_template(
     template: Fact,
     facts: List[Fact],
-    init_match_dict: Optional[Dict[str, Any]] = None
-) -> Tuple[List[Fact], List[Dict[str, Any]]]:
+    init_match_dict: Optional[Substitution] = None
+) -> Tuple[List[Fact], List[Substitution]]:
     """
     Find all facts matching a template pattern.
     """
-    init_match_dict = init_match_dict or {}
+    init_match_dict = init_match_dict or Substitution.empty()
     matches: List[Fact] = []
-    dicts: List[Dict[str, Any]] = []
+    dicts: List[Substitution] = []
 
     for fact in facts:
         if fact.name != template.name:
@@ -394,7 +423,7 @@ def match_facts_to_template(
         if len(fact.args) != len(template.args):
             continue
 
-        match_dict = dict(init_match_dict)
+        match_dict = init_match_dict.copy()
         is_match = True
 
         for temp_arg, fact_arg in zip(template.args, fact.args):
@@ -405,7 +434,7 @@ def match_facts_to_template(
                 continue
 
             if temp_arg not in match_dict:
-                match_dict[temp_arg] = fact_arg
+                match_dict.insert(temp_arg, fact_arg)
             elif match_dict[temp_arg] != fact_arg:
                 is_match = False
                 break
@@ -490,7 +519,7 @@ def _match_with_trigger(
     premises: List[Fact]
 ) -> List[List[Fact]]:
     """Try to complete a theorem match given that new_fact matches premise at trigger_idx."""
-    initial_dict: Dict[str, Any] = {}
+    initial_dict = Substitution.empty()
     if not _unify_facts(premises[trigger_idx], new_fact, initial_dict):
         return []
 
@@ -498,14 +527,14 @@ def _match_with_trigger(
     after_premises = premises[trigger_idx + 1:]
 
     before_matches: List[List[Fact]] = [[]]
-    before_dicts: List[Dict[str, Any]] = [initial_dict.copy()]
+    before_dicts: List[Substitution] = [initial_dict.copy()]
 
     for premise in before_premises:
         new_before_matches: List[List[Fact]] = []
-        new_before_dicts: List[Dict[str, Any]] = []
+        new_before_dicts: List[Substitution] = []
 
         for match, dict_so_far in zip(before_matches, before_dicts):
-            for candidate in pf_envir.facts:
+            for candidate in pf_envir.facts_by_key.get((premise.name, len(premise.args)), []):
                 new_dict = dict_so_far.copy()
                 if _unify_facts(premise, candidate, new_dict):
                     new_before_matches.append(match + [candidate])
@@ -521,14 +550,14 @@ def _match_with_trigger(
 
     for before_match, dict_after_before in zip(before_matches, before_dicts):
         after_matches: List[List[Fact]] = [[]]
-        after_dicts: List[Dict[str, Any]] = [dict_after_before.copy()]
+        after_dicts: List[Substitution] = [dict_after_before.copy()]
 
         for premise in after_premises:
             new_after_matches: List[List[Fact]] = []
-            new_after_dicts: List[Dict[str, Any]] = []
+            new_after_dicts: List[Substitution] = []
 
             for match, dict_so_far in zip(after_matches, after_dicts):
-                for candidate in pf_envir.facts:
+                for candidate in pf_envir.facts_by_key.get((premise.name, len(premise.args)), []):
                     new_dict = dict_so_far.copy()
                     if _unify_facts(premise, candidate, new_dict):
                         new_after_matches.append(match + [candidate])
@@ -546,7 +575,7 @@ def _match_with_trigger(
     return complete_matches
 
 
-def _unify_facts(template: Fact, fact: Fact, substitution_dict: Dict[str, Any]) -> bool:
+def _unify_facts(template: Fact, fact: Fact, substitution: Substitution) -> bool:
     """
     Try to unify template with fact, updating substitution_dict in place.
     """
@@ -559,11 +588,11 @@ def _unify_facts(template: Fact, fact: Fact, substitution_dict: Dict[str, Any]) 
         if isinstance(t_arg, str) and t_arg.startswith("*"):
             if t_arg[1:] != f_arg:
                 return False
-        elif t_arg in substitution_dict:
-            if substitution_dict[t_arg] != f_arg:
+        elif t_arg in substitution:
+            if substitution[t_arg] != f_arg:
                 return False
         else:
-            substitution_dict[t_arg] = f_arg
+            substitution.insert(t_arg, f_arg)
 
     return True
 
