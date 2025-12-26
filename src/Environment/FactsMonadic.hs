@@ -17,7 +17,6 @@ import Environment.Variables (replaceVariables, hasFreshVars)
 import ProofMonad
 import Unification (applyStdThm)
 import qualified Data.HashMap.Strict as HashMap
-import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.IntMap.Strict as IntMap
 
@@ -99,11 +98,10 @@ addNewFactsM concs = concat <$> mapM addOneM concs
 -- Apply a theorem in monadic style
 applyThmM :: Thm -> [FactEntry] -> ProofM [FactEntry]
 applyThmM thm facts = do
-  -- Check disjunction ancestor consistency
+  -- Check disjunction ancestor consistency: ensure each DisjId appears with only one branch index
   let usedAnc = Set.unions (map feDisAncestors facts)
-      usedList = Set.toList usedAnc  -- Cache to avoid double conversion
-      usedDict = Map.fromList usedList
-      consistent = all (\(d, i) -> Map.lookup d usedDict == Just i) usedList
+      uniqueDisjIds = Set.map fst usedAnc
+      consistent = Set.size usedAnc == Set.size uniqueDisjIds
 
   if not consistent
     then return []

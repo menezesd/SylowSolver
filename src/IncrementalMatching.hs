@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+
 -- | Incremental theorem matching for efficient forward chaining.
 --
 -- When a new fact is added, this module efficiently finds all theorems
@@ -54,13 +56,11 @@ findTriggeredMatchesPure :: FactIndex -> FactEntry -> TriggerIndex -> [(Thm, [Fa
 findTriggeredMatchesPure factIdx newFact triggerIndex =
   let key = factKey (feFact newFact)
       triggers = HashMap.lookupDefault [] key triggerIndex
-      tryTrigger trigger =
-        let premises = ttPremises trigger
-            triggerIdx = ttPremiseIndex trigger
-            thm = ttTheorem trigger
-            matchResults = matchNewFactAtPositionPure factIdx newFact premises triggerIdx
-         in [(thm, match) | match <- matchResults]
    in concatMap tryTrigger triggers
+  where
+    tryTrigger TheoremTrigger{..} =
+      let matchResults = matchNewFactAtPositionPure factIdx newFact ttPremises ttPremiseIndex
+       in [(ttTheorem, match) | match <- matchResults]
 
 -- | Pure helper: match premises with a specific fact at a given position
 matchNewFactAtPositionPure :: FactIndex -> FactEntry -> [Fact] -> Int -> [[FactEntry]]

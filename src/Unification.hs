@@ -117,43 +117,35 @@ unifyFacts _ ts fs = Left (ArityMismatch (length ts) (length fs))
 -- Optimized to avoid argText allocations in hot paths
 {-# INLINE unifyArg #-}
 unifyArg :: Substitution -> Arg -> Arg -> Either UnificationError Substitution
-unifyArg subst tArg fArg =
-  case (tArg, fArg) of
-    -- Exact matches: structural comparison
-    (Exact n1, Exact n2) | n1 == n2 -> Right subst
-    (Exact n1, Sym sym2) | n1 == symbolName sym2 -> Right subst
-    (Exact n, Num i) | n == show i -> Right subst
-    (Exact _, _) -> Left (ExactMismatch tArg fArg)
+unifyArg subst tArg fArg
+  -- Variables bind to anything
+  | Var name <- tArg = bindVariable name fArg subst
+  | Fresh name <- tArg = bindVariable name fArg subst
+  -- Structural matches
+  | structuralMatch tArg fArg = Right subst
+  -- Mismatch
+  | otherwise = Left (ExactMismatch tArg fArg)
+  where
+    -- Check if two arguments match structurally
+    structuralMatch (Exact n1) (Exact n2) = n1 == n2
+    structuralMatch (Exact n1) (Sym sym2) = n1 == symbolName sym2
+    structuralMatch (Exact n) (Num i) = n == show i
+    structuralMatch (Sym n1) (Sym n2) = n1 == n2
+    structuralMatch (Sym (Symbol _ n1)) (Exact n2) = n1 == n2
+    structuralMatch (Sym symVal) (Num i) = symbolName symVal == show i
+    structuralMatch (Num i1) (Num i2) = i1 == i2
+    structuralMatch (Num i) (Sym symVal) = show i == symbolName symVal
+    structuralMatch (Num i) (Exact n) = show i == n
+    structuralMatch _ _ = False
 
-    -- Sym matches: structural comparison
-    (Sym n1, Sym n2) | n1 == n2 -> Right subst
-    (Sym (Symbol _ n1), Exact n2) | n1 == n2 -> Right subst
-    (Sym symVal, Num i) | symbolName symVal == show i -> Right subst
-    (Sym _, _) -> Left (ExactMismatch tArg fArg)
-
-    -- Num matches: structural comparison
-    (Num i1, Num i2) | i1 == i2 -> Right subst
-    (Num i, Sym symVal) | show i == symbolName symVal -> Right subst
-    (Num i, Exact n) | show i == n -> Right subst
-    (Num _, _) -> Left (ExactMismatch tArg fArg)
-
-    -- Var: binds to anything (need string representation for substitution)
-    (Var name, _) ->
-      case lookupSubst name subst of
-        Nothing -> Right (insertSubst name fArg subst)
+    -- Bind a variable to a value
+    bindVariable name val subst' =
+      case lookupSubst name subst' of
+        Nothing -> Right (insertSubst name val subst')
         Just v ->
-          if v == fArg
-                then Right subst
-                else Left (ConflictingBinding name v fArg)
-
-    -- Fresh: binds to anything (need string representation for substitution)
-    (Fresh name, _) ->
-      case lookupSubst name subst of
-        Nothing -> Right (insertSubst name fArg subst)
-        Just v ->
-          if v == fArg
-                then Right subst
-                else Left (ConflictingBinding name v fArg)
+          if v == val
+            then Right subst'
+            else Left (ConflictingBinding name v val)
 
 -- Apply standard theorem via unification
 -- Takes premises and conclusions directly (GADT-friendly)

@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Environment.Goals
   ( updateGoalAchieved
   , updateUseful
@@ -61,11 +63,26 @@ updateGoalAchieved env
 -- Mark a fact and its dependencies as useful
 updateUseful :: Label -> ProofEnvironment -> ProofEnvironment
 updateUseful lbl env =
-  case HashMap.lookup lbl (peFactLabels env) of
-    Just (LFactEntry fe)
-      | feUseful fe -> env
-      | otherwise ->
-          let fe' = fe {feUseful = True}
-              env' = updateFactDB (\db -> db { fdFactLabels = HashMap.insert lbl (LFactEntry fe') (fdFactLabels db) }) env
-           in foldl (flip updateUseful) env' (feDependencies fe)
-    _ -> env
+  let toMark = collectUseful Set.empty [lbl] env
+   in if Set.null toMark
+        then env
+        else updateFactDB (\db -> db { fdFactLabels = markAllUseful toMark (fdFactLabels db) }) env
+  where
+    -- Collect all labels that need to be marked (breadth-first to avoid deep recursion)
+    collectUseful !visited [] _ = visited
+    collectUseful !visited (l:ls) e =
+      if Set.member l visited
+        then collectUseful visited ls e
+        else case HashMap.lookup l (peFactLabels e) of
+          Just (LFactEntry fe)
+            | feUseful fe -> collectUseful visited ls e
+            | otherwise -> collectUseful (Set.insert l visited) (ls ++ feDependencies fe) e
+          _ -> collectUseful visited ls e
+
+    -- Batch update: mark all facts in the set as useful
+    markAllUseful toMark labels =
+      HashMap.map updateIfNeeded labels
+      where
+        updateIfNeeded (LFactEntry fe) | Set.member (LFact (feLabel fe)) toMark =
+          LFactEntry (fe {feUseful = True})
+        updateIfNeeded other = other
