@@ -8,7 +8,6 @@ import Core
 import Environment.Types
 import ProofMonad
 import Control.Monad (foldM)
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 -- Monadic version using ProofM for cleaner state threading
@@ -17,18 +16,18 @@ replaceVariablesM concs = do
   subst <- buildSubstM concs
   return $ map (applySubstToConc subst) concs
   where
-    buildSubstM :: [NewConclusion] -> ProofM (Map String Symbol)
+    buildSubstM :: [NewConclusion] -> ProofM (Map.Map String Symbol)
     buildSubstM = foldM collectFreshVars Map.empty
 
-    collectFreshVars :: Map String Symbol -> NewConclusion -> ProofM (Map String Symbol)
+    collectFreshVars :: Map.Map String Symbol -> NewConclusion -> ProofM (Map.Map String Symbol)
     collectFreshVars subst nc =
       foldM processFactForFresh subst (conclusionFacts (ncConclusion nc))
 
-    processFactForFresh :: Map String Symbol -> Fact -> ProofM (Map String Symbol)
+    processFactForFresh :: Map.Map String Symbol -> Fact -> ProofM (Map.Map String Symbol)
     processFactForFresh subst (Fact _ args) =
       foldM processArgForFresh subst args
 
-    processArgForFresh :: Map String Symbol -> Arg -> ProofM (Map String Symbol)
+    processArgForFresh :: Map.Map String Symbol -> Arg -> ProofM (Map.Map String Symbol)
     processArgForFresh subst (Fresh name)
       | Map.member name subst = return subst
       | otherwise = do
@@ -36,20 +35,20 @@ replaceVariablesM concs = do
           return (Map.insert name symName subst)
     processArgForFresh subst _ = return subst
 
-    applySubstToConc :: Map String Symbol -> NewConclusion -> NewConclusion
+    applySubstToConc :: Map.Map String Symbol -> NewConclusion -> NewConclusion
     applySubstToConc subst nc =
       nc { ncConclusion = applySubstToConclusion subst (ncConclusion nc) }
 
-    applySubstToConclusion :: Map String Symbol -> Conclusion -> Conclusion
+    applySubstToConclusion :: Map.Map String Symbol -> Conclusion -> Conclusion
     applySubstToConclusion subst (CFact f) = CFact (applySubstToFact subst f)
     applySubstToConclusion subst (CDisj (Disjunction fs)) =
       CDisj (Disjunction (map (applySubstToFact subst) fs))
 
-    applySubstToFact :: Map String Symbol -> Fact -> Fact
+    applySubstToFact :: Map.Map String Symbol -> Fact -> Fact
     applySubstToFact subst f =
       f { factArgs = map (applySubstToArg subst) (factArgs f) }
 
-    applySubstToArg :: Map String Symbol -> Arg -> Arg
+    applySubstToArg :: Map.Map String Symbol -> Arg -> Arg
     applySubstToArg subst (Fresh name) =
       case Map.lookup name subst of
         Just symName -> Sym symName
