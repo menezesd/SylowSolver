@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 from .config import DEFAULT_CONFIG, OutputMode, SolverConfig
 from .facts import Disjunction, DisjunctionKey, Fact
 from .proof_tree import DisjMeta, infer_disj_meta, render_clean, render_tree
-from .theorem_base import HyperTheorem, Theorem
 from .substitution import Substitution
+from .theorem_base import HyperTheorem, Theorem
 
 
 class ProofEnvironment:

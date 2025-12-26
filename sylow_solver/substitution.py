@@ -28,7 +28,7 @@ class Substitution:
     def insert(self, name: str, value: Any) -> None:
         self._mapping[name] = value
 
-    def items(self):
+    def items(self) -> Iterable[Tuple[str, Any]]:
         return self._mapping.items()
 
     def __contains__(self, name: str) -> bool:

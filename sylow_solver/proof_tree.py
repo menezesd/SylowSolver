@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 if TYPE_CHECKING:
     from .facts import Disjunction, Fact
@@ -66,7 +66,7 @@ def infer_disj_meta(disj: "Disjunction") -> DisjMeta:
     transposed = list(zip(*all_args))
     varying_idx = None
     for i, col in enumerate(transposed):
-        if len(set(str(x) for x in col)) > 1:
+        if len({str(x) for x in col}) > 1:
             varying_idx = i
             break
 
@@ -118,8 +118,8 @@ def _build_tree(
     grouped_facts: Dict[frozenset[Tuple[str, int]], List["Fact"]],
 ) -> ProofTree:
     """Build tree recursively, grouping by case context."""
-    matching = grouped.get(current_case, [])
-    if not matching and len(grouped) == 0:
+    matching = grouped_facts.get(current_case, [])
+    if not matching and len(grouped_facts) == 0:
         return ProofTree(kind="empty")
 
     fact_infos = [
@@ -170,16 +170,15 @@ def _build_tree(
 
 
 def _find_next_split(
-    current_case: frozenset[Tuple[str, int]], grouped_facts: Dict[frozenset[Tuple[str, int]], List["Fact"]]
+    current_case: frozenset[Tuple[str, int]],
+    grouped_facts: Dict[frozenset[Tuple[str, int]], List["Fact"]],
 ) -> Optional[Tuple[str, List[int]]]:
     """Find the next case split point."""
     extensions: List[Tuple[str, int]] = []
     for anc in grouped_facts.keys():
-        if not current_case.issubset(anc):
-            continue
-        diff = anc - current_case
-        for d, i in diff:
-            extensions.append((d, i))
+        if current_case.issubset(anc):
+            for d, i in anc - current_case:
+                extensions.append((d, i))
 
     if not extensions:
         return None
@@ -350,10 +349,7 @@ def _render_case_group(
     return header + body
 
 
-def _render_case_context(
-    ctx: frozenset,
-    disj_meta: Dict[str, DisjMeta]
-) -> str:
+def _render_case_context(ctx: frozenset, disj_meta: Dict[str, DisjMeta]) -> str:
     """Render a case context as a string."""
     parts = []
     for d, idx in sorted(ctx):
@@ -368,10 +364,14 @@ def _render_case_context(
 def _render_fact_clean(fact: "Fact", disj_meta: Dict[str, DisjMeta]) -> List[str]:
     """Render a single fact with clean formatting."""
     is_false = fact.name == "false"
-    fact_str = "⊥ (contradiction)" if is_false else f"{fact.name}({', '.join(str(a) for a in fact.args)})"
+    rendered_args = ", ".join(str(a) for a in fact.args)
+    fact_str = "⊥ (contradiction)" if is_false else f"{fact.name}({rendered_args})"
     label_str = fact.label or "?"
 
-    thm_str = f"by {_pretty_theorem_name(fact.conc_thm.name)}" if fact.conc_thm else "hypothesis"
+    if fact.conc_thm:
+        thm_str = f"by {_pretty_theorem_name(fact.conc_thm.name)}"
+    else:
+        thm_str = "hypothesis"
     dep_str = ""
     if fact.dependencies:
         dep_str = " from " + " ".join(fact.dependencies)
