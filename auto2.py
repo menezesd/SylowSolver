@@ -7,6 +7,7 @@ import logging
 from typing import Iterable, List
 
 from sylow_solver.config import OutputMode, SolverConfig
+from sylow_solver.facts import Fact
 from sylow_solver.logging_utils import get_logger
 from sylow_solver.search import ProofEnvironment, auto_solve
 from sylow_solver.theorems import (
@@ -23,9 +24,9 @@ def build_environment(
     order_value: str, config: SolverConfig, logger: logging.Logger
 ) -> ProofEnvironment:
     """Create a proof environment for a group of given order."""
-    facts = [group("G"), simple("G"), order("G", order_value)]
+    facts: List[Fact] = [group("G"), simple("G"), order("G", order_value)]
     return ProofEnvironment(
-        facts,
+        list(facts),
         DEFAULT_THEOREMS,
         DEFAULT_THEOREM_DICT,
         false(),
