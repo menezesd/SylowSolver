@@ -18,6 +18,7 @@ import Environment.Types (ProofEnvironment, FactEntry(..), DisjMeta(..)
                          , feDisAncestors, feConcThm, feDependencies, peDisjMeta, peFacts)
 import Data.List (intercalate, sortOn)
 import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntSet as IntSet
 import qualified Data.Set as Set
 
 -- | A branch in a case split
@@ -130,7 +131,9 @@ findNextSplit currentCase facts =
   case findExtensions currentCase facts of
     [] -> Nothing
     ((d, _) : exts) ->
-      let branches = Set.toList $ Set.fromList [i | (d', i) <- (d, 0) : exts, d' == d]
+      -- Use IntSet for efficient deduplication of branch indices
+      let branchIndices = [i | (d', i) <- (d, 0) : exts, d' == d]
+          branches = IntSet.toAscList $ IntSet.fromList branchIndices
        in Just (d, branches)
 
 -- | Find disjunction extensions beyond current case

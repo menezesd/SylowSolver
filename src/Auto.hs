@@ -93,17 +93,18 @@ data SearchState = SearchState
   }
 
 -- | Check if a fact's case context is in a closed branch
+{-# INLINE isInClosedBranch #-}
 isInClosedBranch :: Set.Set (DisjId, Int) -> [Set.Set (DisjId, Int)] -> Bool
-isInClosedBranch ancestors closedBranches =
-  any (`Set.isSubsetOf` ancestors) closedBranches
+isInClosedBranch !ancestors closedBranches =
+  case closedBranches of
+    [] -> False  -- Fast path: no closed branches yet
+    _ -> any (`Set.isSubsetOf` ancestors) closedBranches
 
 matchFactsToTheorem :: [Fact] -> ProofEnvironment -> [FactEntry] -> [[FactEntry]]
 matchFactsToTheorem premises env newFacts =
-  let newLabels = Set.fromList [feLabel f | f <- newFacts]
-   in [ match
-      | match <- matchPremises env premises
-      , any (\fe -> Set.member (feLabel fe) newLabels) match
-      ]
+  let !newLabels = Set.fromList (map feLabel newFacts)
+   in filter (\match -> any (\fe -> Set.member (feLabel fe) newLabels) match)
+             (matchPremises env premises)
 
 autoSolve :: ProofEnvironment -> IO Bool
 autoSolve = autoSolveWith defaultConfig

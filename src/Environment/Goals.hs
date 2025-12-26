@@ -19,14 +19,17 @@ updateGoalAchieved env
   | otherwise = envWithCache
   where
     observed = peGoalDisCombos env
-    observedIds = Set.map fst (Set.unions observed)
+    observedIds = Set.fromList [d | s <- observed, (d, _) <- Set.toList s]
+
+    -- Bind disjunctions once to avoid redundant field access
+    disjunctions = peDisjunctions env
 
     -- Current disjunction sizes for observed disjunctions (using IntMap for O(1) lookup)
     currentSizes :: IntMap.IntMap Int
     currentSizes =
       IntMap.fromList
         [ (unDisjId (deLabel disj), length (deFacts disj))
-        | disj <- peDisjunctions env
+        | disj <- disjunctions
         , Set.member (deLabel disj) observedIds
         ]
 

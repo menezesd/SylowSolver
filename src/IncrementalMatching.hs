@@ -65,7 +65,7 @@ findTriggeredMatchesPure factIdx newFact triggerIndex =
 -- | Pure helper: match premises with a specific fact at a given position
 matchNewFactAtPositionPure :: FactIndex -> FactEntry -> [Fact] -> Int -> [[FactEntry]]
 matchNewFactAtPositionPure factIdx newFact premises targetIdx
-  | targetIdx < 0 || targetIdx >= length premises = []
+  | targetIdx < 0 = []  -- splitAt handles upper bound; pattern match handles empty case
   | otherwise =
       let (beforePremises, targetAndAfter) = splitAt targetIdx premises
        in case targetAndAfter of
@@ -98,6 +98,7 @@ matchPremisesWithSubstSeq :: FactIndex -> Substitution -> FactSeq -> [Fact] -> [
 matchPremisesWithSubstSeq factIdx initSubst seedFacts templates =
   foldl' step [(initSubst, seedFacts)] templates
   where
+    {-# INLINE step #-}
     step acc template =
       [ (subst', facts |> factEntry)
       | (subst, facts) <- acc

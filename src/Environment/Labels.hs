@@ -8,7 +8,7 @@ module Environment.Labels
 
 import Core
 import Environment.Types
-import Data.List (sort, sortOn, intercalate)
+import Data.List (sort, intercalate)
 import Data.Maybe (maybeToList)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Set as Set
@@ -16,8 +16,9 @@ import qualified Data.Set as Set
 -- Build structural key from disjunction entry (DisjunctionKey defined in Types)
 disjunctionKey :: DisjunctionEntry -> DisjunctionKey
 disjunctionKey disj =
-  let facts = sortOn (\(Fact n a) -> (n, a)) (deFacts disj)
-      ancestors = sort (Set.toList (deDisAncestors disj))
+  let -- deFacts is already sorted by Fact's Ord instance (via Set.toAscList in Builders)
+      facts = deFacts disj
+      ancestors = Set.toAscList (deDisAncestors disj)
    in mkDisjunctionKey
         [(factName f, factArgs f) | f <- facts]
         (deConcThm disj)
@@ -41,7 +42,7 @@ canonicalDisjunctionSignature disj =
         map ("thm:" ++) (maybeToList (theoremNameText <$> deConcThm disj))
           ++ [ "anc:" ++ intercalate "," ancLabels
              | not (Set.null (deDisAncestors disj))
-             , let ancLabels = sort (Set.toList (Set.map disjLabelText (deDisAncestors disj)))
+             , let ancLabels = Set.toAscList (Set.map disjLabelText (deDisAncestors disj))
              ]
    in if null prov then intercalate "|" sigs else intercalate "|" sigs ++ "::" ++ intercalate "|" prov
 

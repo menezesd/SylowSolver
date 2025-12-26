@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+
 module Environment.FactsMonadic
   ( addFactM
   , addNewFactsM
@@ -36,13 +38,16 @@ addFactM nc f = do
     (existing:_) -> return existing  -- Return existing fact, don't add duplicate
     [] -> do
       -- No duplicate found, add the new fact
-      let lbl = feLabel entry
-      updateFactDBM $ \db -> db
-        { fdFactLabels = HashMap.insert (LFact lbl) (LFactEntry entry) (fdFactLabels db)
-        , fdFacts = entry : fdFacts db
-        , fdOrderedFacts = LFact lbl : fdOrderedFacts db
-        , fdFactIndex = IntMap.insertWith (++) hashKey [entry] (fdFactIndex db)
-        }
+      let !lbl = feLabel entry
+      updateFactDBM $ \db ->
+        let !newFactLabels = HashMap.insert (LFact lbl) (LFactEntry entry) (fdFactLabels db)
+            !newFactIndex = IntMap.insertWith (++) hashKey [entry] (fdFactIndex db)
+         in db
+          { fdFactLabels = newFactLabels
+          , fdFacts = entry : fdFacts db
+          , fdOrderedFacts = LFact lbl : fdOrderedFacts db
+          , fdFactIndex = newFactIndex
+          }
       updateGenStateM $ \gs -> gs { gsStats = (gsStats gs) { esFacts = esFacts (gsStats gs) + 1 } }
 
       -- Check if this fact achieves the goal
@@ -96,8 +101,9 @@ applyThmM :: Thm -> [FactEntry] -> ProofM [FactEntry]
 applyThmM thm facts = do
   -- Check disjunction ancestor consistency
   let usedAnc = Set.unions (map feDisAncestors facts)
-      usedDict = Map.fromList (Set.toList usedAnc)
-      consistent = all (\(d, i) -> Map.lookup d usedDict == Just i) (Set.toList usedAnc)
+      usedList = Set.toList usedAnc  -- Cache to avoid double conversion
+      usedDict = Map.fromList usedList
+      consistent = all (\(d, i) -> Map.lookup d usedDict == Just i) usedList
 
   if not consistent
     then return []
