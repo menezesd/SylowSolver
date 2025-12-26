@@ -18,4 +18,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install ruff
       - name: Lint with Ruff
-        run: ruff check sylow_solver
+        run: ruff check sylow_solver auto2.py sylow2.py
+      - name: Check formatting with Ruff
+        run: ruff format --check sylow_solver auto2.py sylow2.py
+      - name: Byte-compile sources
+        run: python -m compileall sylow_solver auto2.py sylow2.py
