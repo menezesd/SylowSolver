@@ -16,9 +16,10 @@ import Core (Fact(..), Label(..), DisjId(..), FactId(..), TheoremName, PredName(
 import Environment.Symbols (SymbolTable, symbolTable, ppFactWithSymbols)
 import Environment.Types (ProofEnvironment, FactEntry(..), DisjMeta(..)
                          , feDisAncestors, feConcThm, feDependencies, peDisjMeta, peFacts)
-import Data.List (intercalate, sortOn)
+import Data.List (intercalate, sortOn, foldl')
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 -- | A branch in a case split
@@ -238,14 +239,16 @@ deduplicateFacts = go Set.empty
             then go seen fes
             else fe : go (Set.insert key seen) fes
 
--- Group facts by their case context
+-- Group facts by their case context (O(n log n) using Map)
 groupByCaseContext :: [FactEntry] -> [(Set.Set (DisjId, Int), [FactEntry])]
 groupByCaseContext facts =
-  let -- Get all unique case contexts, sorted by size (hypotheses first)
-      contexts = Set.toList $ Set.fromList [feDisAncestors fe | fe <- facts]
-      sortedContexts = sortOn Set.size contexts
-      -- Group facts by context
-   in [(ctx, [fe | fe <- facts, feDisAncestors fe == ctx]) | ctx <- sortedContexts]
+  let -- Build map from context to facts in single pass
+      contextMap = foldl' insertFact Map.empty facts
+      -- Sort contexts by size (hypotheses first)
+      sortedGroups = sortOn (Set.size . fst) (Map.toList contextMap)
+   in sortedGroups
+  where
+    insertFact m fe = Map.insertWith (++) (feDisAncestors fe) [fe] m
 
 -- Render a case group with header
 renderCaseGroup :: SymbolTable -> IntMap.IntMap DisjMeta -> (Set.Set (DisjId, Int), [FactEntry]) -> [String]
@@ -257,6 +260,7 @@ renderCaseGroup symTbl metaMap (ctx, facts) =
    in header ++ body
 
 -- Render case context as a string
+{-# INLINE renderCaseContext #-}
 renderCaseContext :: IntMap.IntMap DisjMeta -> Set.Set (DisjId, Int) -> String
 renderCaseContext metaMap ctx =
   intercalate ", " [renderCase metaMap (d, i) | (d, i) <- Set.toList ctx]
@@ -297,13 +301,9 @@ renderSummary metaMap contradictions =
              , fe <- take 1 fes]
 
 -- | Group facts by their case context, returning list of (context, facts) pairs
+-- Note: Reuses groupByCaseContext for consistency and performance
 groupByContext :: [FactEntry] -> [(Set.Set (DisjId, Int), [FactEntry])]
-groupByContext = foldr insertByCtx []
-  where
-    insertByCtx fe [] = [(feDisAncestors fe, [fe])]
-    insertByCtx fe ((ctx, fes):rest)
-      | feDisAncestors fe == ctx = (ctx, fe:fes) : rest
-      | otherwise = (ctx, fes) : insertByCtx fe rest
+groupByContext = groupByCaseContext
 
 -- Summarize a single branch
 summarizeBranch :: IntMap.IntMap DisjMeta -> Set.Set (DisjId, Int) -> FactEntry -> String
@@ -326,6 +326,7 @@ renderCase metaMap (DisjId d, idx) =
     Nothing -> "D" ++ show d ++ "." ++ show idx
 
 -- Safe list indexing with default value
+{-# INLINE safeIndex #-}
 safeIndex :: [a] -> Int -> a -> a
 safeIndex xs i def
   | i < 0 = def
@@ -340,6 +341,7 @@ labelText (LFact (FactId n)) = "F" ++ show n
 labelText (LDisj (DisjId n)) = "D" ++ show n
 
 -- Pretty-print theorem names
+{-# INLINE prettyTheoremName #-}
 prettyTheoremName :: TheoremName -> String
 prettyTheoremName tn = case theoremNameText tn of
   "sylow" -> "Sylow's theorem"
