@@ -157,9 +157,7 @@ def _single_sylow_rule(facts: List[Fact]) -> List[Fact]:
     return conclusions
 
 
-single_sylow_not_simple = HyperTheorem(
-    in_facts, _single_sylow_rule, "single_sylow_normal"
-)
+single_sylow_not_simple = HyperTheorem(in_facts, _single_sylow_rule, "single_sylow_normal")
 
 # simple + not_simple = false
 in_facts = [Fact(Predicates.SIMPLE.value, ["G"]), Fact(Predicates.NOT_SIMPLE.value, ["G"])]
@@ -365,9 +363,7 @@ def _possible_max_intersections_rule(facts: List[Fact]) -> List[Disjunction]:
     possible_intersection = 1
     intersection_facts = []
     while possible_intersection != pk:
-        intersection_facts.append(
-            max_sylow_intersection(G, str(p), str(possible_intersection))
-        )
+        intersection_facts.append(max_sylow_intersection(G, str(p), str(possible_intersection)))
         possible_intersection = possible_intersection * p
     return [Disjunction(intersection_facts)]
 
@@ -543,7 +539,5 @@ DEFAULT_THEOREM_DICT: Dict[str, Union[Theorem, HyperTheorem]] = {
     "normalizer_everything_implies_normal": normalizer_everything_implies_normal,
     "normal_subgroup_to_not_simple": normal_subgroup_to_not_simple,
     "rule_out_max_intersections": rule_out_max_intersections,
-    "rule_out_normalizer_of_intersection_order": (
-        rule_out_normalizer_of_intersection_order
-    ),
+    "rule_out_normalizer_of_intersection_order": (rule_out_normalizer_of_intersection_order),
 }

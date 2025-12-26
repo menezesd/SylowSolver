@@ -78,10 +78,7 @@ class ProofEnvironment:
                 self.disj_branch_counts[label] = count
             disj_branch_counts.append((label, count))
 
-        branch_choices = [
-            [(label, i) for i in range(count)]
-            for label, count in disj_branch_counts
-        ]
+        branch_choices = [[(label, i) for i in range(count)] for label, count in disj_branch_counts]
         all_combinations = {frozenset(combo) for combo in itertools.product(*branch_choices)}
 
         frozen_dis_combos = {frozenset(d) for d in self.goal_dis_combos}
@@ -153,9 +150,7 @@ class ProofEnvironment:
         key = (fact.name, len(fact.args))
         self.facts_by_key.setdefault(key, []).append(fact)
 
-    def apply_std_thm(
-        self, thm: Theorem, facts: List[Fact]
-    ) -> Optional[List[Fact]]:
+    def apply_std_thm(self, thm: Theorem, facts: List[Fact]) -> Optional[List[Fact]]:
         """Apply a standard theorem to a list of facts."""
         if len(facts) != len(thm.facts):
             return None
@@ -370,9 +365,7 @@ class ProofEnvironment:
 
 
 def match_facts_to_theorem(
-    thm_facts: List[Fact],
-    facts: List[Fact],
-    new_facts: Optional[List[Fact]] = None
+    thm_facts: List[Fact], facts: List[Fact], new_facts: Optional[List[Fact]] = None
 ) -> List[List[Fact]]:
     """
     Find all fact combinations matching a theorem's premises.
@@ -406,9 +399,7 @@ def match_facts_to_theorem(
 
 
 def match_facts_to_template(
-    template: Fact,
-    facts: List[Fact],
-    init_match_dict: Optional[Substitution] = None
+    template: Fact, facts: List[Fact], init_match_dict: Optional[Substitution] = None
 ) -> Tuple[List[Fact], List[Substitution]]:
     """
     Find all facts matching a template pattern.
@@ -512,11 +503,7 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
 
 
 def _match_with_trigger(
-    pf_envir: ProofEnvironment,
-    new_fact: Fact,
-    thm: Any,
-    trigger_idx: int,
-    premises: List[Fact]
+    pf_envir: ProofEnvironment, new_fact: Fact, thm: Any, trigger_idx: int, premises: List[Fact]
 ) -> List[List[Fact]]:
     """Try to complete a theorem match given that new_fact matches premise at trigger_idx."""
     initial_dict = Substitution.empty()
@@ -524,7 +511,7 @@ def _match_with_trigger(
         return []
 
     before_premises = premises[:trigger_idx]
-    after_premises = premises[trigger_idx + 1:]
+    after_premises = premises[trigger_idx + 1 :]
 
     before_matches: List[List[Fact]] = [[]]
     before_dicts: List[Substitution] = [initial_dict.copy()]

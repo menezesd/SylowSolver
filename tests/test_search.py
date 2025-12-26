@@ -82,9 +82,7 @@ def test_subgroup_transitivity_chain():
         goal,
         config=CONFIG,
     )
-    assert auto_solve(pf_envir), (
-        "Should prove X is subgroup of F through transitivity chain"
-    )
+    assert auto_solve(pf_envir), "Should prove X is subgroup of F through transitivity chain"
 
 
 def test_simple_disjunction():
@@ -137,9 +135,7 @@ def test_complex_disjunction():
         goal,
         config=CONFIG,
     )
-    assert auto_solve(pf_envir), (
-        "Should prove X is subgroup of F through disjunction cases"
-    )
+    assert auto_solve(pf_envir), "Should prove X is subgroup of F through disjunction cases"
 
 
 def test_alternating_embedding():

@@ -234,11 +234,7 @@ def _get_essential_facts(facts: List["Fact"]) -> List["Fact"]:
     return result
 
 
-def _trace_essential(
-    fact_map: Dict[str, "Fact"],
-    label: Optional[str],
-    visited: Set[str]
-) -> None:
+def _trace_essential(fact_map: Dict[str, "Fact"], label: Optional[str], visited: Set[str]) -> None:
     """Recursively trace dependencies to find essential facts."""
     if not label or label in visited:
         return
@@ -250,9 +246,7 @@ def _trace_essential(
             _trace_essential(fact_map, dep, visited)
 
 
-def _render_node(
-    meta: Dict[str, DisjMeta], prefix: str, tree: ProofTree
-) -> List[str]:
+def _render_node(meta: Dict[str, DisjMeta], prefix: str, tree: ProofTree) -> List[str]:
     """Render a single node of the proof tree."""
     if tree.kind == "empty":
         return []
@@ -314,9 +308,7 @@ def render_clean(
     return lines
 
 
-def _group_by_case_context(
-    facts: List["Fact"]
-) -> List[Tuple[frozenset, List["Fact"]]]:
+def _group_by_case_context(facts: List["Fact"]) -> List[Tuple[frozenset, List["Fact"]]]:
     """Group facts by their case context, sorted by context size."""
     contexts: Set[frozenset] = set()
     for f in facts:
@@ -325,15 +317,12 @@ def _group_by_case_context(
     sorted_contexts = sorted(contexts, key=len)
 
     return [
-        (ctx, [f for f in facts if frozenset(f.dis_ancestors) == ctx])
-        for ctx in sorted_contexts
+        (ctx, [f for f in facts if frozenset(f.dis_ancestors) == ctx]) for ctx in sorted_contexts
     ]
 
 
 def _render_case_group(
-    ctx: frozenset,
-    facts: List["Fact"],
-    disj_meta: Dict[str, DisjMeta]
+    ctx: frozenset, facts: List["Fact"], disj_meta: Dict[str, DisjMeta]
 ) -> List[str]:
     """Render a case group with header."""
     if not ctx:
@@ -384,10 +373,7 @@ def _render_fact_clean(fact: "Fact", disj_meta: Dict[str, DisjMeta]) -> List[str
     ]
 
 
-def _render_summary(
-    disj_meta: Dict[str, DisjMeta],
-    contradictions: List["Fact"]
-) -> List[str]:
+def _render_summary(disj_meta: Dict[str, DisjMeta], contradictions: List["Fact"]) -> List[str]:
     """Render proof summary showing closed branches."""
     if not contradictions:
         return ["", "No contradictions found."]

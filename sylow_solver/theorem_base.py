@@ -13,9 +13,7 @@ class Theorem:
         self.conclusions = conclusions
         self.name = name
         # Precompile argument patterns for faster matching
-        self.compiled_patterns = [
-            [_compile_arg(arg) for arg in fact.args] for fact in facts
-        ]
+        self.compiled_patterns = [[_compile_arg(arg) for arg in fact.args] for fact in facts]
 
     def __repr__(self) -> str:
         return f"Theorem({self.name!r})"

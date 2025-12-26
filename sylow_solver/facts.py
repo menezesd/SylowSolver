@@ -18,8 +18,7 @@ class Fact:
 
     def __str__(self) -> str:
         return (
-            f"{self.label} : {self.name} {self.args} :: "
-            f"{self.dependencies} :: {self.dis_ancestors}"
+            f"{self.label} : {self.name} {self.args} :: {self.dependencies} :: {self.dis_ancestors}"
         )
 
     def __repr__(self) -> str:
