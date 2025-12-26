@@ -3,7 +3,6 @@ module Main where
 import Auto (matchFactsToTheorem)
 import Data.List (nub)
 import Core
-import qualified Data.Map.Strict as Map
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Set as Set
 import Env
@@ -166,7 +165,7 @@ propUnifyIdempotent :: String -> Bool
 propUnifyIdempotent name =
   let f = Fact (customPred name) []
    in case unify f f of
-        Right subst -> Map.null subst
+        Right subst -> nullSubstitution subst
         Left _ -> False
 
 propUnifyIdentical :: String -> String -> Bool
@@ -174,7 +173,7 @@ propUnifyIdentical name arg =
   let f1 = Fact (customPred name) [sym arg]
       f2 = Fact (customPred name) [sym arg]
    in case unify f1 f2 of
-        Right subst -> Map.null subst
+        Right subst -> nullSubstitution subst
         Left _ -> False
 
 caseUnifyNameMismatch :: Assertion
@@ -353,7 +352,7 @@ propEqualFactsEqualKeys f =
 
 propEmptySubstIdentity :: Property
 propEmptySubstIdentity = forAll genSymOnlyFact $ \f ->
-  applySubstToFact Map.empty f == f
+  applySubstToFact emptySubstitution f == f
 
 -- Generate facts with only Sym and Num args (Exact converts to Sym)
 genSymOnlyFact :: Gen Fact
@@ -367,7 +366,7 @@ genSymOnlyFact = do
 
 propSubstDeterministic :: Fact -> Bool
 propSubstDeterministic f =
-  let subst = Map.fromList [("X", sym "a"), ("Y", sym "b")]
+  let subst = substFromList [("X", sym "a"), ("Y", sym "b")]
    in applySubstToFact subst f == applySubstToFact subst f
 
 propInternIdempotent :: String -> Bool

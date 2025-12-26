@@ -14,7 +14,6 @@ module ProofTrace
 import Core
 import Env
 import Environment.Types (peOrderedFacts, peFactLabels)
-import Environment.Symbols (symbolTable, SymbolTable)
 import Data.Maybe (mapMaybe)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Set as Set
@@ -62,5 +61,5 @@ labelText lbl =
     LDisj (DisjId n) -> "D" ++ show n
 
 instance Show ProofStep where
-  show (ProofStep fe tbl) =
-    labelText (LFact (feLabel fe)) ++ " : " ++ ppFactWithIntMap tbl (feFact fe)
+  show (ProofStep fe symTbl) =
+    labelText (LFact (feLabel fe)) ++ " : " ++ ppFactWithSymbols symTbl (feFact fe)

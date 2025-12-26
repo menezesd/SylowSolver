@@ -1,21 +1,28 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DerivingVia #-}
 
 module Environment.Symbols
-  ( SymbolTable
+  ( SymbolTable(..)
   , generateNewSymbol
   , nextSymbol
   , internSymbol
   , symbolTable
   , lookupSymbolName
   , registerSymbol
+  , ppArgWithSymbols
+  , ppFactWithSymbols
   ) where
 
 import Core
 import Environment.Types
+import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import qualified Data.IntMap.Strict as IntMap
 
-type SymbolTable = IntMap.IntMap String
+-- | Type-safe wrapper around symbol name lookup table
+newtype SymbolTable = SymbolTable { unSymbolTable :: IntMap.IntMap String }
+  deriving stock (Eq, Show)
+  deriving (Semigroup, Monoid) via (IntMap.IntMap String)
 
 -- | Core symbol generation logic (pure).
 -- Given current letter, suffix, and map of used symbols,
@@ -77,9 +84,25 @@ internSymbol s env =
 
 -- | Extract the symbol table from the environment.
 symbolTable :: ProofEnvironment -> SymbolTable
-symbolTable = peSymbolNames
+symbolTable = SymbolTable . peSymbolNames
 
 -- | Lookup the printable name for a symbol, falling back to the embedded name.
+{-# INLINE lookupSymbolName #-}
 lookupSymbolName :: SymbolTable -> Symbol -> String
-lookupSymbolName tbl symVal =
+lookupSymbolName (SymbolTable tbl) symVal =
   IntMap.findWithDefault (symbolName symVal) (unSymbol symVal) tbl
+
+{-# INLINE ppArgWithSymbols #-}
+ppArgWithSymbols :: SymbolTable -> Arg -> String
+ppArgWithSymbols tbl arg =
+  case arg of
+    Sym s -> lookupSymbolName tbl s
+    Var s -> "?" ++ s
+    Exact s -> "'" ++ s ++ "'"
+    Fresh s -> "_" ++ s
+    Num n -> show n
+
+{-# INLINE ppFactWithSymbols #-}
+ppFactWithSymbols :: SymbolTable -> Fact -> String
+ppFactWithSymbols tbl (Fact n args) =
+  predNameText n ++ "(" ++ intercalate ", " (map (ppArgWithSymbols tbl) args) ++ ")"

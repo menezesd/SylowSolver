@@ -1,3 +1,6 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 -- | First-order unification for matching theorem premises to facts.
 --
 -- This module implements unification between template patterns (from theorem
@@ -25,6 +28,13 @@
 --
 module Unification
   ( Substitution
+  , unSubstitution
+  , emptySubstitution
+  , nullSubstitution
+  , lookupSubst
+  , insertSubst
+  , substFromList
+  , singletonSubst
   , UnificationError(..)
   , unify
   , unifyFact
@@ -40,8 +50,34 @@ import Environment.Types
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
--- Type alias for substitutions
-type Substitution = Map String Arg
+-- Type-safe wrapper around substitutions (variable name -> argument binding)
+newtype Substitution = Substitution { unSubstitution :: Map String Arg }
+  deriving stock (Eq, Show)
+  deriving newtype (Semigroup, Monoid)
+
+{-# INLINE emptySubstitution #-}
+emptySubstitution :: Substitution
+emptySubstitution = Substitution Map.empty
+
+{-# INLINE nullSubstitution #-}
+nullSubstitution :: Substitution -> Bool
+nullSubstitution = Map.null . unSubstitution
+
+{-# INLINE lookupSubst #-}
+lookupSubst :: String -> Substitution -> Maybe Arg
+lookupSubst name (Substitution subst) = Map.lookup name subst
+
+{-# INLINE insertSubst #-}
+insertSubst :: String -> Arg -> Substitution -> Substitution
+insertSubst name arg (Substitution subst) = Substitution (Map.insert name arg subst)
+
+{-# INLINE substFromList #-}
+substFromList :: [(String, Arg)] -> Substitution
+substFromList = Substitution . Map.fromList
+
+{-# INLINE singletonSubst #-}
+singletonSubst :: String -> Arg -> Substitution
+singletonSubst name arg = Substitution (Map.singleton name arg)
 
 -- Unification errors
 data UnificationError
@@ -52,10 +88,12 @@ data UnificationError
   deriving (Eq, Show)
 
 -- Unify a single fact with another fact
+{-# INLINE unify #-}
 unify :: Fact -> Fact -> Either UnificationError Substitution
-unify = unifyFact Map.empty
+unify = unifyFact mempty
 
 -- Unify a fact with a substitution already in place
+{-# INLINE unifyFact #-}
 unifyFact :: Substitution -> Fact -> Fact -> Either UnificationError Substitution
 unifyFact subst (Fact tName tArgs) (Fact fName fArgs)
   | tName /= fName = Left (NameMismatch tName fName)
@@ -67,6 +105,7 @@ unifyFact subst (Fact tName tArgs) (Fact fName fArgs)
     step (Right m) (tArg, fArg) = unifyArg m tArg fArg
 
 -- Unify multiple facts in sequence
+{-# INLINE unifyFacts #-}
 unifyFacts :: Substitution -> [Fact] -> [Fact] -> Either UnificationError Substitution
 unifyFacts subst [] [] = Right subst
 unifyFacts subst (t : ts) (f : fs) = do
@@ -100,8 +139,8 @@ unifyArg subst tArg fArg =
 
     -- Var: binds to anything (need string representation for substitution)
     (Var name, _) ->
-      case Map.lookup name subst of
-        Nothing -> Right (Map.insert name fArg subst)
+      case lookupSubst name subst of
+        Nothing -> Right (insertSubst name fArg subst)
         Just v ->
           if v == fArg
                 then Right subst
@@ -109,8 +148,8 @@ unifyArg subst tArg fArg =
 
     -- Fresh: binds to anything (need string representation for substitution)
     (Fresh name, _) ->
-      case Map.lookup name subst of
-        Nothing -> Right (Map.insert name fArg subst)
+      case lookupSubst name subst of
+        Nothing -> Right (insertSubst name fArg subst)
         Just v ->
           if v == fArg
                 then Right subst
@@ -120,7 +159,7 @@ unifyArg subst tArg fArg =
 -- Takes premises and conclusions directly (GADT-friendly)
 applyStdThm :: [Fact] -> [Fact] -> [FactEntry] -> [Fact]
 applyStdThm premises conclusions facts =
-  case unifyFacts Map.empty premises (map feFact facts) of
+  case unifyFacts mempty premises (map feFact facts) of
     Left _ -> []
     Right mapping -> map (applySubstToFact mapping) conclusions
 
@@ -136,15 +175,15 @@ applySubstToArg :: Substitution -> Arg -> Arg
 applySubstToArg subst arg =
   case arg of
     Var name ->
-      case Map.lookup name subst of
+      case lookupSubst name subst of
         Just boundArg -> boundArg
         Nothing -> arg
     Exact name ->
-      case Map.lookup name subst of
+      case lookupSubst name subst of
         Just boundArg -> boundArg
         Nothing -> Exact name -- If not bound, it remains an Exact
     Fresh name ->
-      case Map.lookup name subst of
+      case lookupSubst name subst of
         Just boundArg -> boundArg
         Nothing -> arg
     Sym _ -> arg

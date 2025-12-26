@@ -12,10 +12,11 @@ module ProofTree
   ) where
 
 import Core (Fact(..), Label(..), DisjId(..), FactId(..), TheoremName, PredName(..)
-            , ppFactWithIntMap, theoremNameText, factName)
+            , theoremNameText, factName)
+import Environment.Symbols (SymbolTable, symbolTable, ppFactWithSymbols)
 import Environment.Types (ProofEnvironment, FactEntry(..), DisjMeta(..)
-                         , feDisAncestors, feConcThm, feDependencies, peDisjMeta, peFacts, peSymbolNames)
-import Data.List (foldl', intercalate, sortOn)
+                         , feDisAncestors, feConcThm, feDependencies, peDisjMeta, peFacts)
+import Data.List (intercalate, sortOn)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Set as Set
 
@@ -48,18 +49,18 @@ buildProofTree :: ProofEnvironment -> ProofTree
 buildProofTree env =
   let facts = reverse (peFacts env)  -- Chronological order
       metaMap = peDisjMeta env
-      symTbl = peSymbolNames env
+      symTbl = symbolTable env
 
       -- Build lookup map and find essential facts
       factMap = IntMap.fromList [(unFactId (feLabel fe), fe) | fe <- facts]
       contradictions = [fe | fe <- facts, factName (feFact fe) == PFalse]
-      essentialIds = foldl' Set.union Set.empty [traceEssential factMap (feLabel fe) | fe <- contradictions]
+      essentialIds = Set.unions [traceEssential factMap (feLabel fe) | fe <- contradictions]
       essential = deduplicateFacts [fe | fe <- facts, Set.member (feLabel fe) essentialIds]
 
    in buildTree metaMap symTbl Set.empty essential
 
 -- Build tree recursively, grouping by case context
-buildTree :: IntMap.IntMap DisjMeta -> IntMap.IntMap String -> Set.Set (DisjId, Int) -> [FactEntry] -> ProofTree
+buildTree :: IntMap.IntMap DisjMeta -> SymbolTable -> Set.Set (DisjId, Int) -> [FactEntry] -> ProofTree
 buildTree _ _ _ [] = PTEmpty
 buildTree metaMap tbl currentCase allFacts =
   let (matching, rest) = extractMatchingFacts currentCase allFacts
@@ -89,7 +90,7 @@ buildContradictionBranch [] = PTEmpty
 buildContradictionBranch fis = foldr PTFact (PTContradiction "contradiction") (init fis)
 
 -- | Build a normal branch (possibly with case splits)
-buildNormalBranch :: IntMap.IntMap DisjMeta -> IntMap.IntMap String
+buildNormalBranch :: IntMap.IntMap DisjMeta -> SymbolTable
                   -> Set.Set (DisjId, Int) -> [FactInfo] -> [FactEntry] -> ProofTree
 buildNormalBranch metaMap tbl currentCase factInfos rest =
   case findNextSplit currentCase rest of
@@ -113,7 +114,7 @@ getBranchValues metaMap disjId =
     Nothing -> map show [(0::Int)..]
 
 -- | Build all case branches for a disjunction
-buildCaseBranches :: IntMap.IntMap DisjMeta -> IntMap.IntMap String
+buildCaseBranches :: IntMap.IntMap DisjMeta -> SymbolTable
                   -> Set.Set (DisjId, Int) -> [FactEntry] -> DisjId -> [CaseBranch]
 buildCaseBranches metaMap tbl currentCase rest disjId =
   [ CaseBranch disjId idx label subtree
@@ -145,19 +146,19 @@ renderTree :: ProofEnvironment -> [String]
 renderTree env =
   let tree = buildProofTree env
       metaMap = peDisjMeta env
-      symTbl = peSymbolNames env
+      symTbl = symbolTable env
       facts = reverse (peFacts env)
       contradictions = [fe | fe <- facts, factName (feFact fe) == PFalse]
-      summary = renderSummary symTbl metaMap contradictions
+      summary = renderSummary metaMap contradictions
    in ["", "Proof Structure:", "════════════════", ""]
       ++ renderNode symTbl metaMap "" tree
       ++ summary
 
-renderNode :: IntMap.IntMap String -> IntMap.IntMap DisjMeta -> String -> ProofTree -> [String]
+renderNode :: SymbolTable -> IntMap.IntMap DisjMeta -> String -> ProofTree -> [String]
 renderNode _ _ _ PTEmpty = []
 renderNode _tbl _meta prefix (PTContradiction _) = [prefix ++ "└─ ⊥ (contradiction)"]
 renderNode tbl meta prefix (PTFact fi rest) =
-  let factStr = ppFactWithIntMap tbl (fiFact fi)
+  let factStr = ppFactWithSymbols tbl (fiFact fi)
       labelStr = "F" ++ show (unFactId (fiLabel fi))
       thmStr = case fiTheorem fi of
                  Just tn -> " [" ++ theoremNameText tn ++ "]"
@@ -167,7 +168,7 @@ renderNode tbl meta prefix (PTCaseSplit _disjId varName branches) =
   let header = prefix ++ "┌─ Case split on " ++ varName ++ ":"
    in header : concatMap (renderBranch tbl meta prefix (length branches)) (zip [0..] branches)
 
-renderBranch :: IntMap.IntMap String -> IntMap.IntMap DisjMeta -> String -> Int -> (Int, CaseBranch) -> [String]
+renderBranch :: SymbolTable -> IntMap.IntMap DisjMeta -> String -> Int -> (Int, CaseBranch) -> [String]
 renderBranch tbl meta prefix total (idx, branch) =
   let isLast = idx == total - 1
       connector = if isLast then "└" else "├"
@@ -184,7 +185,7 @@ renderClean :: ProofEnvironment -> [String]
 renderClean env =
   let facts = reverse (peFacts env)  -- Chronological order
       metaMap = peDisjMeta env
-      symTbl = peSymbolNames env
+      symTbl = symbolTable env
 
       -- Build lookup map from FactId -> FactEntry
       factMap = IntMap.fromList [(unFactId (feLabel fe), fe) | fe <- facts]
@@ -193,7 +194,7 @@ renderClean env =
       contradictions = [fe | fe <- facts, factName (feFact fe) == PFalse]
 
       -- Trace back to find essential facts
-      essentialIds = foldl' Set.union Set.empty [traceEssential factMap (feLabel fe) | fe <- contradictions]
+      essentialIds = Set.unions [traceEssential factMap (feLabel fe) | fe <- contradictions]
       essential = [fe | fe <- facts, Set.member (feLabel fe) essentialIds]
 
       -- Deduplicate
@@ -206,7 +207,7 @@ renderClean env =
       renderedGroups = concatMap (renderCaseGroup symTbl metaMap) grouped
 
       -- Build summary
-      summary = renderSummary symTbl metaMap contradictions
+      summary = renderSummary metaMap contradictions
 
    in renderedGroups ++ summary
 
@@ -244,7 +245,7 @@ groupByCaseContext facts =
    in [(ctx, [fe | fe <- facts, feDisAncestors fe == ctx]) | ctx <- sortedContexts]
 
 -- Render a case group with header
-renderCaseGroup :: IntMap.IntMap String -> IntMap.IntMap DisjMeta -> (Set.Set (DisjId, Int), [FactEntry]) -> [String]
+renderCaseGroup :: SymbolTable -> IntMap.IntMap DisjMeta -> (Set.Set (DisjId, Int), [FactEntry]) -> [String]
 renderCaseGroup symTbl metaMap (ctx, facts) =
   let header = if Set.null ctx
                  then ["═══ Hypotheses ═══", ""]
@@ -258,12 +259,12 @@ renderCaseContext metaMap ctx =
   intercalate ", " [renderCase metaMap (d, i) | (d, i) <- Set.toList ctx]
 
 -- Render a single fact with clean formatting
-renderFactClean :: IntMap.IntMap String -> IntMap.IntMap DisjMeta -> FactEntry -> [String]
+renderFactClean :: SymbolTable -> IntMap.IntMap DisjMeta -> FactEntry -> [String]
 renderFactClean tbl _metaMap fe =
   let isFalse = factName (feFact fe) == PFalse
       factStr = if isFalse
                   then "⊥ (contradiction)"
-                  else ppFactWithIntMap tbl (feFact fe)
+                  else ppFactWithSymbols tbl (feFact fe)
       labelStr = "F" ++ show (unFactId (feLabel fe))
       thmStr = case feConcThm fe of
                  Just tn -> "by " ++ prettyTheoremName tn
@@ -278,8 +279,8 @@ renderFactClean tbl _metaMap fe =
       ,""]
 
 -- Render proof summary
-renderSummary :: IntMap.IntMap String -> IntMap.IntMap DisjMeta -> [FactEntry] -> [String]
-renderSummary _symTbl metaMap contradictions =
+renderSummary :: IntMap.IntMap DisjMeta -> [FactEntry] -> [String]
+renderSummary metaMap contradictions =
   let -- Group contradictions by case context
       grouped = groupByContext contradictions
       numBranches = length grouped

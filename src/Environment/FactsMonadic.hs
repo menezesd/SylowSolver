@@ -6,7 +6,6 @@ module Environment.FactsMonadic
   ) where
 
 import Control.Monad (when)
-import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import Environment.Builders (BuiltFact(..), BuiltDisjunction(..), buildFact, buildDisjunction, inferDisjMeta)
 import Core
@@ -96,7 +95,7 @@ addNewFactsM concs = concat <$> mapM addOneM concs
 applyThmM :: Thm -> [FactEntry] -> ProofM [FactEntry]
 applyThmM thm facts = do
   -- Check disjunction ancestor consistency
-  let usedAnc = foldl' Set.union Set.empty (map feDisAncestors facts)
+  let usedAnc = Set.unions (map feDisAncestors facts)
       usedDict = Map.fromList (Set.toList usedAnc)
       consistent = all (\(d, i) -> Map.lookup d usedDict == Just i) (Set.toList usedAnc)
 

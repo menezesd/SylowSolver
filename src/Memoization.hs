@@ -1,4 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Thread-safe memoization for number theory functions.
 --
@@ -52,6 +56,8 @@ module Memoization
 
 import qualified Data.IntMap.Strict as IntMap
 import Data.IORef
+import Data.Kind (Constraint)
+import GHC.TypeLits (TypeError, ErrorMessage(..))
 import System.IO.Unsafe (unsafePerformIO)
 import NumberTheory
 
@@ -61,6 +67,16 @@ data CacheStats = CacheStats
   , csMisses :: !Int
   , csCacheSize :: !Int
   } deriving (Show, Eq)
+
+type family Memoizable a :: Constraint where
+  Memoizable [Int] = ()
+  Memoizable [(Int, Int)] = ()
+  Memoizable Bool = ()
+  Memoizable other = TypeError
+    ( 'Text "memoizeInt cannot cache values of type: "
+        ':<>: 'ShowType other
+        ':$$: 'Text "Add it to Memoizable or wrap it in a memo-capable type."
+    )
 
 data MemoStore = MemoStore
   { msDivisors :: IORef (IntMap.IntMap [Int])
@@ -97,7 +113,28 @@ globalMemoStore = unsafePerformIO newMemoStore
 --   - atomicModifyIORef' ensures thread-safe cache access
 --   - The result is the same whether cached or computed
 {-# INLINE memoizeInt #-}
-memoizeInt :: IORef (IntMap.IntMap b) -> IORef CacheStats -> (Int -> b) -> Int -> b
+{-# SPECIALIZE memoizeInt ::
+      IORef (IntMap.IntMap [Int])
+      -> IORef CacheStats
+      -> (Int -> [Int])
+      -> Int
+      -> [Int]
+  #-}
+{-# SPECIALIZE memoizeInt ::
+      IORef (IntMap.IntMap [(Int, Int)])
+      -> IORef CacheStats
+      -> (Int -> [(Int, Int)])
+      -> Int
+      -> [(Int, Int)]
+  #-}
+{-# SPECIALIZE memoizeInt ::
+      IORef (IntMap.IntMap Bool)
+      -> IORef CacheStats
+      -> (Int -> Bool)
+      -> Int
+      -> Bool
+  #-}
+memoizeInt :: Memoizable b => IORef (IntMap.IntMap b) -> IORef CacheStats -> (Int -> b) -> Int -> b
 memoizeInt cacheRef statsRef f x = unsafePerformIO $ do
   -- Atomic lookup-or-insert: check cache, compute if missing
   (result, isHit) <- atomicModifyIORef' cacheRef $ \cache ->
@@ -116,15 +153,19 @@ memoizeInt cacheRef statsRef f x = unsafePerformIO $ do
 -- Memoized versions of number theory functions
 
 divisorsMemo :: Int -> [Int]
+{-# INLINE divisorsMemo #-}
 divisorsMemo = divisorsMemoWith globalMemoStore
 
 primeFactorsMemo :: Int -> [Int]
+{-# INLINE primeFactorsMemo #-}
 primeFactorsMemo = primeFactorsMemoWith globalMemoStore
 
 primeFactorizationMemo :: Int -> [(Int, Int)]
+{-# INLINE primeFactorizationMemo #-}
 primeFactorizationMemo = primeFactorizationMemoWith globalMemoStore
 
 isPrimeMemo :: Int -> Bool
+{-# INLINE isPrimeMemo #-}
 isPrimeMemo = isPrimeMemoWith globalMemoStore
 
 divisorsMemoWith :: MemoStore -> Int -> [Int]
@@ -142,12 +183,15 @@ isPrimeMemoWith store = memoizeInt (msIsPrime store) (msStats store) isPrime
 -- Derived memoized functions that use the cached primitives
 
 numSylowMemo :: Int -> Int -> [Int]
+{-# INLINE numSylowMemo #-}
 numSylowMemo = numSylowMemoWith globalMemoStore
 
 pKillableMemo :: Int -> Int -> Bool
+{-# INLINE pKillableMemo #-}
 pKillableMemo = pKillableMemoWith globalMemoStore
 
 sylowKillableMemo :: Int -> Bool
+{-# INLINE sylowKillableMemo #-}
 sylowKillableMemo = sylowKillableMemoWith globalMemoStore
 
 numSylowMemoWith :: MemoStore -> Int -> Int -> [Int]

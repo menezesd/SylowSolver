@@ -33,7 +33,6 @@ import Data.Hashable (hash)
 import Data.IntMap.Strict (IntMap)
 import Data.Sequence (Seq, (|>))
 import Environment.Types (TriggerIndex, peFactIndex)
-import qualified Data.Map.Strict as Map
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Sequence as Seq
@@ -73,7 +72,7 @@ matchNewFactAtPositionPure factIdx newFact premises targetIdx
             [] -> []
             (targetPremise : afterPremises) ->
               let fact = feFact newFact
-               in case unifyFact Map.empty targetPremise fact of
+               in case unifyFact mempty targetPremise fact of
                     Left _ -> []
                     Right subst ->
                       [ toList fullFacts
@@ -94,6 +93,7 @@ matchFactsToTemplatePure factIdx template initMap =
       ]
 
 -- | Internal Seq-based matching for O(1) snoc
+{-# INLINE matchPremisesWithSubstSeq #-}
 matchPremisesWithSubstSeq :: FactIndex -> Substitution -> FactSeq -> [Fact] -> [(Substitution, FactSeq)]
 matchPremisesWithSubstSeq factIdx initSubst seedFacts templates =
   foldl' step [(initSubst, seedFacts)] templates
@@ -105,6 +105,7 @@ matchPremisesWithSubstSeq factIdx initSubst seedFacts templates =
       ]
 
 -- | Pure version: match a sequence of premises
+{-# INLINE matchPremisesWithSubstPure #-}
 matchPremisesWithSubstPure :: FactIndex -> Substitution -> [FactEntry] -> [Fact] -> [(Substitution, [FactEntry])]
 matchPremisesWithSubstPure factIdx initSubst seedFacts templates =
   [ (subst, toList facts)
@@ -112,10 +113,11 @@ matchPremisesWithSubstPure factIdx initSubst seedFacts templates =
   ]
 
 -- | Pure version: convenience wrapper without final substitution
+{-# INLINE matchPremisesPure #-}
 matchPremisesPure :: FactIndex -> [Fact] -> [[FactEntry]]
 matchPremisesPure factIdx templates =
   [ facts
-  | (_subst, facts) <- matchPremisesWithSubstPure factIdx Map.empty [] templates
+  | (_subst, facts) <- matchPremisesWithSubstPure factIdx mempty [] templates
   ]
 
 ------------------------------------------------------------------------
@@ -132,9 +134,11 @@ matchFactsToTemplate :: Fact -> ProofEnvironment -> Substitution -> [(FactEntry,
 matchFactsToTemplate template env = matchFactsToTemplatePure (peFactIndex env) template
 
 -- | Match premises with substitution (convenience wrapper)
+{-# INLINE matchPremisesWithSubst #-}
 matchPremisesWithSubst :: ProofEnvironment -> Substitution -> [FactEntry] -> [Fact] -> [(Substitution, [FactEntry])]
 matchPremisesWithSubst env = matchPremisesWithSubstPure (peFactIndex env)
 
 -- | Match premises (convenience wrapper)
+{-# INLINE matchPremises #-}
 matchPremises :: ProofEnvironment -> [Fact] -> [[FactEntry]]
 matchPremises env = matchPremisesPure (peFactIndex env)

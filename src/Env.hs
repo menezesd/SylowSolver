@@ -29,12 +29,18 @@ module Env
   , peGoalAchieved
   , peTriggerIndex
   , peFactDB
+  , SymbolTable
+  , symbolTable
+  , lookupSymbolName
+  , ppArgWithSymbols
+  , ppFactWithSymbols
   ) where
 
 import Environment.Types
 import Environment.Init (initEnv)
 import Environment.FactsMonadic (addNewFactsM)
 import Environment.Goals (updateGoalAchieved)
+import Environment.Symbols (SymbolTable, symbolTable, lookupSymbolName, ppArgWithSymbols, ppFactWithSymbols)
 import ProofMonad (runProofM)
 
 -- Pure wrapper around monadic fact insertion for tests/benchmarks

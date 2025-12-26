@@ -1,0 +1,2 @@
+-- Route cabal logs into the workspace to avoid permission issues in shared caches
+logs-dir: dist-newstyle/logs
