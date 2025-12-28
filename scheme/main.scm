@@ -34,192 +34,230 @@
         (display-result env result group-order)
         (values env result)))))
 
-(define (display-simple-summary env)
-  "Display a detailed summary of how the proof succeeded."
-  (display "Proof Summary:")
-  (newline)
-  (display "══════════════")
-  (newline)
-  (newline)
-
-  ;; Show goal achievements
-  (let ((goals (env-goal-combos env))
-        (closed (env-closed-branches env))
-        (meta-map (env-disj-meta env)))
-    (display (string-append "  Goal achieved in "
-                            (number->string (length goals))
-                            " branch(es)"))
-    (newline)
-    (display (string-append "  Contradictions in "
-                            (number->string (length closed))
-                            " branch(es)"))
-    (newline)
-    (newline)
-
-    ;; Show key derived information
-    (display "Prime Factorization & Sylow Analysis:")
-    (newline)
-    (display "─────────────────────────────────────")
-    (newline)
-    (display-sylow-info env)
-    (newline)
-
-    ;; Show disjunction splits
-    (display "Case Analysis:")
-    (newline)
-    (display "──────────────")
-    (newline)
-    (display-case-splits env meta-map)
-    (newline)
-
-    ;; Show conclusions in each branch
-    (display "Conclusions by Branch:")
-    (newline)
-    (display "──────────────────────")
-    (newline)
-    (display-branch-conclusions env meta-map goals closed)))
-
-(define (display-sylow-info env)
-  "Display Sylow subgroup information derived in the proof."
+(define (display-verbose-proof env)
+  "Display the full proof with derivation chains like the Haskell version."
   (let* ((facts (env-facts env))
-         (sylow-counts (filter (lambda (f)
-                                 (eq? (fact-predicate f) 'num_sylow))
-                               facts)))
-    (when (pair? sylow-counts)
-      (display "  Sylow subgroup count constraints (by Sylow's theorem):")
-      (newline)
-      (let ((by-prime (group-sylow-by-prime sylow-counts)))
-        (for-each
-         (lambda (entry)
-           (display "    n")
-           (display (subscript-string (car entry)))
-           (display " ≡ 1 (mod ")
-           (display (car entry))
-           (display "), n")
-           (display (subscript-string (car entry)))
-           (display " | |G| → n")
-           (display (subscript-string (car entry)))
-           (display " ∈ {")
-           (display (string-join (map number->string (cdr entry)) ", "))
-           (display "}")
-           (newline))
-         by-prime)))))
+         (meta-map (env-disj-meta env))
+         (grouped (group-facts-by-context facts meta-map)))
 
-(define (group-sylow-by-prime sylow-facts)
-  "Group num_sylow facts by prime, returning ((prime . values) ...)."
-  (let ((ht (make-hash-table equal?)))
+    ;; Display each case group
     (for-each
-     (lambda (f)
-       (let* ((args (fact-args f))
-              (p (arg-value (car args)))
-              (n (arg-value (caddr args)))
-              (existing (hash-table-ref/default ht p '())))
-         (unless (member n existing)
-           (hash-table-set! ht p (cons n existing)))))
-     sylow-facts)
-    (map (lambda (p)
-           (cons (number->string p)
-                 (sort (hash-table-ref ht p) <)))
-         (sort (hash-table-keys ht) <))))
+     (lambda (group)
+       (display-case-header (car group) meta-map)
+       (display-facts-in-group (cdr group) env)
+       (newline))
+     grouped)
 
-(define (hash-table-keys ht)
-  "Get all keys from a hash table."
-  (let ((keys '()))
-    (hash-table-walk ht (lambda (k v) (set! keys (cons k keys))))
-    keys))
+    ;; Display proof summary
+    (display-proof-summary env meta-map)))
 
-(define (display-case-splits env meta-map)
-  "Display the case splits used in the proof (deduplicated)."
-  (let ((disjs (env-disjunctions env))
-        (seen (make-hash-table equal?)))
-    (let loop ((ds disjs) (i 0))
-      (unless (null? ds)
-        (let* ((d (car ds))
-               (label (disj-label d))
-               (meta (hash-table-ref/default meta-map label
-                                             (make-disj-meta "case" '())))
-               (var-name (disj-meta-var-name meta))
-               (values (disj-meta-branch-values meta))
-               (key (cons var-name values)))
-          (unless (hash-table-ref/default seen key #f)
-            (hash-table-set! seen key #t)
-            (display "  • Case split: ")
-            (display var-name)
-            (display " ∈ {")
-            (display (string-join values ", "))
-            (display "}")
-            (newline))
-          (loop (cdr ds) (+ i 1)))))))
-
-(define (display-branch-conclusions env meta-map goals closed)
-  "Display how each branch was resolved."
-  ;; Group not_simple facts by their disjunction ancestors
-  (let* ((facts (env-facts env))
-         (goal-facts (filter (lambda (f)
-                               (eq? (fact-predicate f) 'not_simple))
-                             facts))
-         (shown-reasons (make-hash-table equal?)))
-
-    ;; Collect unique reasons for not_simple
+(define (group-facts-by-context facts meta-map)
+  "Group facts by their case context, returning ((context . facts) ...)."
+  (let ((groups (make-hash-table equal?)))
+    ;; Group facts by context
     (for-each
      (lambda (f)
        (let* ((ctx (fact-dis-ancestors f))
-              (thm (fact-theorem f))
-              (reason (get-concise-reason f env)))
-         (when reason
-           (let ((key reason))
-             (unless (hash-table-ref/default shown-reasons key #f)
-               (hash-table-set! shown-reasons key thm))))))
-     goal-facts)
+              (ctx-key (context->key ctx))
+              (existing (hash-table-ref/default groups ctx-key '())))
+         (hash-table-set! groups ctx-key (cons f existing))))
+     facts)
+    ;; Convert to list and sort by context depth (hypotheses first)
+    (let ((entries (hash-table->alist groups)))
+      (map (lambda (entry)
+             (cons (car entry) (reverse (cdr entry))))
+           (sort entries
+                 (lambda (a b)
+                   (< (length (car a)) (length (car b)))))))))
 
-    ;; Display goal achievements
-    (hash-table-walk
-     shown-reasons
-     (lambda (reason thm)
-       (display "  ✓ ")
-       (display reason)
-       (newline)))
+(define (context->key ctx)
+  "Convert a context hash-table to a sorted list for use as a key."
+  (sort (hash-table->alist ctx)
+        (lambda (a b)
+          (string<? (format-context-entry a)
+                    (format-context-entry b)))))
 
-    ;; Collect and display unique contradictions
-    (let ((shown-contras (make-hash-table equal?)))
-      (for-each
-       (lambda (ctx)
-         (let ((ctx-str (if (zero? (hash-table-size ctx))
-                            "Base case"
-                            (render-context ctx meta-map))))
-           (unless (hash-table-ref/default shown-contras ctx-str #f)
-             (hash-table-set! shown-contras ctx-str #t)
-             (display "  ✗ ")
-             (display ctx-str)
-             (display ": element counting contradiction")
-             (newline))))
-       closed))))
+(define (format-context-entry entry)
+  "Format a context entry for sorting."
+  (string-append (caar entry) "." (number->string (cdar entry))))
 
-(define (get-concise-reason f env)
-  "Get a concise reason string for why goal was achieved."
-  (let ((thm (fact-theorem f))
-        (deps (fact-deps f))
-        (facts (env-facts env)))
-    (cond
-      ((eq? thm 'single_sylow_normal)
-       ;; Find the num_sylow(p, G, 1) fact this came from
-       (let loop ((ds deps))
-         (if (null? ds)
-             #f
-             (let ((dep (find (lambda (fact)
-                                (equal? (fact-label fact) (car ds)))
-                              facts)))
-               (if (and dep
-                        (eq? (fact-predicate dep) 'num_sylow)
-                        (= (length (fact-args dep)) 3)
-                        (eqv? (arg-value (caddr (fact-args dep))) 1))
-                   (string-append "n"
-                                  (subscript-string (arg-display (car (fact-args dep))))
-                                  " = 1 → unique Sylow subgroup is normal → not simple")
-                   (loop (cdr ds)))))))
-      ((eq? thm 'counting_contradiction)
-       "Element counting yields contradiction")
-      (else #f))))
+(define (display-case-header ctx-key meta-map)
+  "Display a case header like ═══ Case: n₂=1 ═══"
+  (if (null? ctx-key)
+      (begin
+        (display "═══ Hypotheses ═══")
+        (newline))
+      (begin
+        (display "═══ Case: ")
+        (display (format-context-key ctx-key meta-map))
+        (display " ═══")
+        (newline)))
+  (newline))
+
+(define (format-context-key ctx-key meta-map)
+  "Format a context key as a readable string like 'n₂=1, n₃=10'."
+  (string-join
+   (map (lambda (entry)
+          (let* ((disj-id (caar entry))
+                 (idx (cdar entry))
+                 (meta (hash-table-ref/default meta-map disj-id #f)))
+            (if meta
+                (string-append (disj-meta-var-name meta) "="
+                               (safe-list-ref (disj-meta-branch-values meta) idx "?"))
+                (string-append disj-id "." (number->string idx)))))
+        ctx-key)
+   ", "))
+
+(define (display-facts-in-group facts env)
+  "Display facts in a group with their derivations."
+  ;; Sort facts: conclusions (false, not_simple) last
+  (let ((sorted (sort-facts-for-display facts)))
+    (for-each
+     (lambda (f)
+       (display-single-fact f env))
+     sorted)))
+
+(define (sort-facts-for-display facts)
+  "Sort facts so conclusions appear last."
+  (let ((conclusions '())
+        (others '()))
+    (for-each
+     (lambda (f)
+       (if (or (eq? (fact-predicate f) 'false)
+               (eq? (fact-predicate f) 'not_simple))
+           (set! conclusions (cons f conclusions))
+           (set! others (cons f others))))
+     facts)
+    (append (reverse others) (reverse conclusions))))
+
+(define (display-single-fact f env)
+  "Display a single fact with its derivation."
+  (let* ((pred (fact-predicate f))
+         (is-conclusion (or (eq? pred 'false) (eq? pred 'not_simple)))
+         (label (or (fact-label f) "?"))
+         (thm (fact-theorem f))
+         (deps (fact-deps f)))
+
+    ;; Fact line with optional checkmark for conclusions
+    (if is-conclusion
+        (display "  ✓ ")
+        (display "  "))
+    (display label)
+    (display " : ")
+    (if (eq? pred 'false)
+        (display "⊥ (contradiction)")
+        (display (pp-fact f)))
+    (newline)
+
+    ;; Derivation line
+    (if is-conclusion
+        (display "  ✓     by ")
+        (display "      by "))
+    (display (pretty-theorem-name thm))
+    (when (pair? deps)
+      (display " from ")
+      (display (string-join deps " ")))
+    (newline)
+    (newline)))
+
+(define (pretty-theorem-name name)
+  "Pretty-print theorem names."
+  (case name
+    ((hypothesis) "hypothesis")
+    ((sylow) "Sylow's theorem")
+    ((single_sylow_normal) "unique Sylow subgroup is normal")
+    ((not_simple_contradiction) "simple ∧ not_simple → ⊥")
+    ((counting_contradiction) "element counting")
+    ((lagrange) "Lagrange's theorem")
+    ((divides_contradiction) "divisibility contradiction")
+    ((embed_An) "embedding into Aₙ")
+    ((alternating_order) "order of alternating group")
+    ((alternating_simple) "Aₙ is simple (n≥5)")
+    ((subgroup_index) "subgroup index")
+    ((count_order_pk_elements) "counting p^k-order elements")
+    ((more_than_one_sylow) "more than one Sylow subgroup")
+    ((simple_group_action) "simple group action")
+    ((coset_action) "coset action")
+    ((transitive_action) "transitive action")
+    (else (if (symbol? name) (symbol->string name) "unknown"))))
+
+(define (display-proof-summary env meta-map)
+  "Display the proof summary at the end."
+  (let* ((goals (env-goal-combos env))
+         (closed (env-closed-branches env))
+         (total-branches (+ (length goals) (length closed))))
+
+    (display "═══ Proof Summary ═══")
+    (newline)
+    (newline)
+
+    (if (and (null? goals) (null? closed))
+        (display "No proof found.")
+        (begin
+          (display (string-append "Proved "
+                                  (if (pair? goals) "goal" "contradiction")
+                                  " in "
+                                  (number->string total-branches)
+                                  " branch"
+                                  (if (= total-branches 1) "" "es")
+                                  ":"))
+          (newline)
+          (newline)
+
+          ;; Show each successful branch
+          (for-each
+           (lambda (ctx)
+             (display "  ✓ ")
+             (display (format-branch-result ctx meta-map env))
+             (newline))
+           (append goals closed))))
+    (newline)))
+
+(define (format-branch-result ctx meta-map env)
+  "Format a branch result for the summary."
+  (let ((ctx-str (if (zero? (hash-table-size ctx))
+                     "base case"
+                     (format-context-key (context->key ctx) meta-map))))
+    ;; Find how this branch was resolved
+    (let ((conclusion (find-branch-conclusion ctx env)))
+      (string-append ctx-str " → " conclusion))))
+
+(define (find-branch-conclusion ctx env)
+  "Find how a branch was concluded."
+  (let ((facts (env-facts env)))
+    ;; Look for not_simple or false in this context
+    (let loop ((fs facts))
+      (if (null? fs)
+          "resolved"
+          (let* ((f (car fs))
+                 (f-ctx (fact-dis-ancestors f))
+                 (pred (fact-predicate f)))
+            (if (and (context-matches? f-ctx ctx)
+                     (or (eq? pred 'false) (eq? pred 'not_simple)))
+                (cond
+                  ((eq? pred 'false)
+                   (case (fact-theorem f)
+                     ((not_simple_contradiction) "simple ∧ not_simple → ⊥")
+                     ((counting_contradiction) "element counting")
+                     ((divides_contradiction) "divisibility contradiction")
+                     (else "contradiction")))
+                  ((eq? pred 'not_simple)
+                   (case (fact-theorem f)
+                     ((single_sylow_normal) "unique Sylow → normal → not simple")
+                     (else "not simple")))
+                  (else "resolved"))
+                (loop (cdr fs))))))))
+
+(define (context-matches? f-ctx target-ctx)
+  "Check if fact context matches target context."
+  (let ((f-alist (hash-table->alist f-ctx))
+        (t-alist (hash-table->alist target-ctx)))
+    (and (= (length f-alist) (length t-alist))
+         (every (lambda (entry)
+                  (let ((key (car entry))
+                        (val (cdr entry)))
+                    (equal? (hash-table-ref/default target-ctx key 'none) val)))
+                f-alist))))
 
 (define (display-result env result order)
   "Display the solver result."
@@ -243,8 +281,8 @@
      (display (string-append "  Disjunctions: " (number->string (length (env-disjunctions env)))))
      (newline)
      (newline)
-     ;; Show simple summary instead of full tree (tree has performance issues)
-     (display-simple-summary env))
+     ;; Show full proof with derivation chains
+     (display-verbose-proof env))
 
     ((exhausted)
      (display "✗ EXHAUSTED: Could not prove (group may be simple)")
