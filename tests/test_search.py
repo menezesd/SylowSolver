@@ -213,7 +213,9 @@ def test_order_12_not_simple_regression():
         goal,
         config=SolverConfig(max_iterations=250, batch_size=8, verbose=False),
     )
-    assert auto_solve(pf_envir), "Order 12 should derive contradiction under simple-group assumption"
+    assert auto_solve(pf_envir), (
+        "Order 12 should derive contradiction under simple-group assumption"
+    )
 
 
 def test_order_30_not_simple_regression():
@@ -226,7 +228,9 @@ def test_order_30_not_simple_regression():
         goal,
         config=SolverConfig(max_iterations=350, batch_size=8, verbose=False),
     )
-    assert auto_solve(pf_envir), "Order 30 should derive contradiction under simple-group assumption"
+    assert auto_solve(pf_envir), (
+        "Order 30 should derive contradiction under simple-group assumption"
+    )
 
 
 def test_order_60_does_not_force_contradiction_regression():
@@ -239,6 +243,6 @@ def test_order_60_does_not_force_contradiction_regression():
         goal,
         config=SolverConfig(max_iterations=40, batch_size=8, verbose=False),
     )
-    assert not auto_solve(
-        pf_envir
-    ), "Order 60 has a simple example (A5), so solver must not force contradiction"
+    assert not auto_solve(pf_envir), (
+        "Order 60 has a simple example (A5), so solver must not force contradiction"
+    )

@@ -90,7 +90,9 @@ class ProofEnvironment:
         cache_key = tuple(disj_branch_counts)
         all_combinations = self._combo_cache.get(cache_key)
         if all_combinations is None:
-            branch_choices = [[(label, i) for i in range(count)] for label, count in disj_branch_counts]
+            branch_choices = [
+                [(label, i) for i in range(count)] for label, count in disj_branch_counts
+            ]
             all_combinations = {frozenset(combo) for combo in itertools.product(*branch_choices)}
             self._combo_cache[cache_key] = all_combinations
         for combination in all_combinations:

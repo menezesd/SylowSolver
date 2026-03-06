@@ -20,7 +20,9 @@ from sylow_solver.theorems import (
 )
 
 
-def build_environment(order_value: int, config: SolverConfig, logger: logging.Logger) -> ProofEnvironment:
+def build_environment(
+    order_value: int, config: SolverConfig, logger: logging.Logger
+) -> ProofEnvironment:
     """Create a proof environment for a group of given order."""
     facts: List[Fact] = [group("G"), simple("G"), order("G", str(order_value))]
     return ProofEnvironment(
