@@ -10,7 +10,7 @@ import qualified Data.Set as Set
 import Env
 import Unification
 import Generators
-import Predicates (falseFact, group, order, pNumSylow, simple)
+import Predicates (falseFact, group, order, simple)
 import NumberTheory
 import Memoization
 import Test.Tasty
@@ -94,9 +94,9 @@ tests =
 
 propExactMatch :: String -> String -> Bool
 propExactMatch g h =
-  let template = [Fact pNumSylow [exact "2", var "G"]]
-      fMatch = Fact pNumSylow [sym "2", sym g]
-      fNoMatch = Fact pNumSylow [sym "3", sym h]
+  let template = [Fact PNumSylow [exact "2", var "G"]]
+      fMatch = Fact PNumSylow [sym "2", sym g]
+      fNoMatch = Fact PNumSylow [sym "3", sym h]
       
       -- Create an initial environment and add facts to it
       env0 = initEnv [] [] HashMap.empty (group (sym "dummy")) -- Use a dummy goal
