@@ -12,7 +12,7 @@ module ProofTree
   ) where
 
 import Core (Fact(..), Label(..), DisjId(..), FactId(..), TheoremName, PredName(..)
-            , theoremNameText, factName)
+            , theoremNameText, factName, labelText)
 import Environment.Symbols (SymbolTable, symbolTable, ppFactWithSymbols)
 import Environment.Types (ProofEnvironment, FactEntry(..), DisjMeta(..)
                          , feDisAncestors, feConcThm, feDependencies, peDisjMeta, peFacts)
@@ -335,10 +335,6 @@ safeIndex xs i def
     go [] _ = def
     go (x:_) 0 = x
     go (_:rest) n = go rest (n - 1)
-
-labelText :: Label -> String
-labelText (LFact (FactId n)) = "F" ++ show n
-labelText (LDisj (DisjId n)) = "D" ++ show n
 
 -- Pretty-print theorem names
 {-# INLINE prettyTheoremName #-}

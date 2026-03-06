@@ -113,13 +113,18 @@ mkVarName POrder _ _ = "|G|"
 mkVarName PIndex _ _ = "index"
 mkVarName pn _ _ = predNameText pn
 
--- Convert a string to subscript (simple version)
+-- Convert a digit string to Unicode subscript characters
 subscript :: String -> String
-subscript s = case s of
-  "2" -> "₂"
-  "3" -> "₃"
-  "5" -> "₅"
-  "7" -> "₇"
-  "11" -> "₁₁"
-  "13" -> "₁₃"
-  _ -> "_" ++ s
+subscript = map toSubscript
+  where
+    toSubscript '0' = '₀'
+    toSubscript '1' = '₁'
+    toSubscript '2' = '₂'
+    toSubscript '3' = '₃'
+    toSubscript '4' = '₄'
+    toSubscript '5' = '₅'
+    toSubscript '6' = '₆'
+    toSubscript '7' = '₇'
+    toSubscript '8' = '₈'
+    toSubscript '9' = '₉'
+    toSubscript c   = c

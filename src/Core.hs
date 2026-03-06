@@ -75,11 +75,8 @@ module Core
   , pattern IndexFact
   , pattern NormalFact
   , pattern SylowPSubgroupFact
-    -- * View functions for argument extraction
-  , viewArgs1
-  , viewArgs2
-  , viewArgs3
-  , viewNumAt
+    -- * Label formatting
+  , labelText
     -- * GADT-based theorem representation
   , ThmKind(..)
   , TypedThm(..)
@@ -98,15 +95,10 @@ module Core
   , ppFact
   , argAtom
   , matchSym
-    -- * IntMap-based pretty printing
-  , ppArgWithIntMap
-  , ppFactWithIntMap
-  , argTextWithIntMap
   ) where
 
 import Data.List (intercalate)
 import Data.Hashable (Hashable(..))
-import qualified Data.IntMap.Strict as IntMap
 
 -- | Unique identifier for interned symbols.
 newtype SymbolId = SymbolId { unSymbolId :: Int }
@@ -143,7 +135,7 @@ instance Ord Symbol where
   compare s1 s2 = compare (symbolId s1) (symbolId s2)
 
 instance Hashable Symbol where
-  hashWithSalt salt (Symbol _ name) = hashWithSalt salt name
+  hashWithSalt salt s = hashWithSalt salt (unSymbol s)
 
 data PredName
   = PGroup
@@ -270,25 +262,17 @@ theoremNameFromText = mkTheoremName
 
 -- Pretty-printing functions for Arg and Fact
 ppArg :: Arg -> String
-ppArg = ppArgWithIntMap IntMap.empty
-
-ppFact :: Fact -> String
-ppFact = ppFactWithIntMap IntMap.empty
-
--- | Pretty-print an Arg with a symbol name lookup table
-ppArgWithIntMap :: IntMap.IntMap String -> Arg -> String
-ppArgWithIntMap tbl arg =
+ppArg arg =
   case arg of
-    Sym s -> IntMap.findWithDefault (symbolName s) (unSymbol s) tbl
+    Sym s -> symbolName s
     Var s -> "?" ++ s
     Exact s -> "'" ++ s ++ "'"
     Fresh s -> "_" ++ s
     Num n -> show n
 
--- | Pretty-print a Fact with a symbol name lookup table
-ppFactWithIntMap :: IntMap.IntMap String -> Fact -> String
-ppFactWithIntMap tbl (Fact n args) =
-  predNameText n ++ "(" ++ intercalate ", " (map (ppArgWithIntMap tbl) args) ++ ")"
+ppFact :: Fact -> String
+ppFact (Fact n args) =
+  predNameText n ++ "(" ++ intercalate ", " (map ppArg args) ++ ")"
 
 newtype FactId = FactId { unFactId :: Int } deriving stock (Eq, Ord, Show)
 newtype DisjId = DisjId { unDisjId :: Int } deriving stock (Eq, Ord, Show)
@@ -346,13 +330,9 @@ num = Num
 
 {-# INLINE argText #-}
 argText :: Arg -> String
-argText = argTextWithIntMap IntMap.empty
-
--- | Get the text of an argument without pretty-printing prefixes
-argTextWithIntMap :: IntMap.IntMap String -> Arg -> String
-argTextWithIntMap tbl arg =
+argText arg =
   case arg of
-    Sym s -> IntMap.findWithDefault (symbolName s) (unSymbol s) tbl
+    Sym s -> symbolName s
     Var s -> s
     Exact s -> s
     Fresh s -> s
@@ -435,34 +415,17 @@ pattern NormalFact h g = Fact PNormal [h, g]
 pattern SylowPSubgroupFact :: Arg -> Arg -> Arg -> Fact
 pattern SylowPSubgroupFact psub p g = Fact PSylowPSubgroup [psub, p, g]
 
--- | View functions for extracting fact arguments
--- Use with ViewPatterns extension: f (viewArgs2 -> Just (a, b)) = ...
-
-viewArgs1 :: Fact -> Maybe Arg
-viewArgs1 (Fact _ [a]) = Just a
-viewArgs1 _ = Nothing
-
-viewArgs2 :: Fact -> Maybe (Arg, Arg)
-viewArgs2 (Fact _ [a, b]) = Just (a, b)
-viewArgs2 _ = Nothing
-
-viewArgs3 :: Fact -> Maybe (Arg, Arg, Arg)
-viewArgs3 (Fact _ [a, b, c]) = Just (a, b, c)
-viewArgs3 _ = Nothing
-
--- | Extract integer from a Num argument at position
-viewNumAt :: Int -> Fact -> Maybe Int
-viewNumAt idx (Fact _ args) =
-  case drop idx args of
-    (Num n : _) -> Just n
-    _ -> Nothing
-
 data Disjunction = Disjunction
   { disjFacts :: [Fact]  -- Empty disjunction = FALSE
   } deriving stock (Eq, Show)
 
 instance Hashable Disjunction where
   hashWithSalt salt (Disjunction fs) = hashWithSalt salt fs
+
+-- | Format a label for display
+labelText :: Label -> String
+labelText (LFact (FactId n)) = "F" ++ show n
+labelText (LDisj (DisjId n)) = "D" ++ show n
 
 -- | Kind-level tag distinguishing theorem types
 data ThmKind

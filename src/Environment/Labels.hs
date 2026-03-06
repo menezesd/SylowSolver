@@ -1,15 +1,11 @@
 module Environment.Labels
   ( newFactLabel
   , newDisjunctionLabel
-  , canonicalDisjunctionSignature
-  , disjLabelText
   , disjunctionKey
   ) where
 
 import Core
 import Environment.Types
-import Data.List (sort, intercalate)
-import Data.Maybe (maybeToList)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Set as Set
 
@@ -29,26 +25,6 @@ newFactLabel :: ProofEnvironment -> (FactId, ProofEnvironment)
 newFactLabel env =
   let lbl = FactId (peCurFactNum env)
    in (lbl, updateGenState (\gs -> gs { gsCurFactNum = gsCurFactNum gs + 1 }) env)
-
--- Generate canonical signature for a disjunction
-canonicalDisjunctionSignature :: DisjunctionEntry -> String
-canonicalDisjunctionSignature disj =
-  let sigs =
-        sort
-          [ predNameText (factName f) ++ ":" ++ intercalate "," (map argText (factArgs f))
-          | f <- deFacts disj
-          ]
-      prov =
-        map ("thm:" ++) (maybeToList (theoremNameText <$> deConcThm disj))
-          ++ [ "anc:" ++ intercalate "," ancLabels
-             | not (Set.null (deDisAncestors disj))
-             , let ancLabels = Set.toAscList (Set.map disjLabelText (deDisAncestors disj))
-             ]
-   in if null prov then intercalate "|" sigs else intercalate "|" sigs ++ "::" ++ intercalate "|" prov
-
--- Convert disjunction ID to text
-disjLabelText :: (DisjId, Int) -> String
-disjLabelText (DisjId n, _) = "D" ++ show n
 
 -- Generate a new disjunction label (reuses existing if same key)
 newDisjunctionLabel :: ProofEnvironment -> DisjunctionEntry -> (DisjId, ProofEnvironment)

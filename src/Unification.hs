@@ -97,9 +97,11 @@ unify = unifyFact mempty
 unifyFact :: Substitution -> Fact -> Fact -> Either UnificationError Substitution
 unifyFact subst (Fact tName tArgs) (Fact fName fArgs)
   | tName /= fName = Left (NameMismatch tName fName)
-  | length tArgs /= length fArgs = Left (ArityMismatch (length tArgs) (length fArgs))
+  | lenT /= lenF = Left (ArityMismatch lenT lenF)
   | otherwise = foldl step (Right subst) (zip tArgs fArgs)
   where
+    lenT = length tArgs
+    lenF = length fArgs
     step :: Either UnificationError Substitution -> (Arg, Arg) -> Either UnificationError Substitution
     step (Left err) _ = Left err
     step (Right m) (tArg, fArg) = unifyArg m tArg fArg

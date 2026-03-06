@@ -79,10 +79,9 @@ updateUseful lbl env =
             | otherwise -> collectUseful (Set.insert l visited) (ls ++ feDependencies fe) e
           _ -> collectUseful visited ls e
 
-    -- Batch update: mark all facts in the set as useful
+    -- Targeted update: only adjust the labels that need marking (O(k log n) vs O(n))
     markAllUseful toMark labels =
-      HashMap.map updateIfNeeded labels
-      where
-        updateIfNeeded (LFactEntry fe) | Set.member (LFact (feLabel fe)) toMark =
-          LFactEntry (fe {feUseful = True})
-        updateIfNeeded other = other
+      Set.foldl' (\m l -> HashMap.adjust markUseful l m) labels toMark
+
+    markUseful (LFactEntry fe) = LFactEntry (fe { feUseful = True })
+    markUseful other = other

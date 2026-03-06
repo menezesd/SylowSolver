@@ -1,6 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE FlexibleInstances #-}
 
 -- | Thread-safe memoization for number theory functions.
 --
@@ -64,11 +62,6 @@ data CacheStats = CacheStats
   , csCacheSize :: !Int
   } deriving (Show, Eq)
 
-class Memoizable a
-instance Memoizable [Int]
-instance Memoizable [(Int, Int)]
-instance Memoizable Bool
-
 data MemoStore = MemoStore
   { msDivisors :: IORef (IntMap.IntMap [Int])
   , msPrimeFactors :: IORef (IntMap.IntMap [Int])
@@ -104,28 +97,7 @@ globalMemoStore = unsafePerformIO newMemoStore
 --   - atomicModifyIORef' ensures thread-safe cache access
 --   - The result is the same whether cached or computed
 {-# INLINE memoizeInt #-}
-{-# SPECIALIZE memoizeInt ::
-      IORef (IntMap.IntMap [Int])
-      -> IORef CacheStats
-      -> (Int -> [Int])
-      -> Int
-      -> [Int]
-  #-}
-{-# SPECIALIZE memoizeInt ::
-      IORef (IntMap.IntMap [(Int, Int)])
-      -> IORef CacheStats
-      -> (Int -> [(Int, Int)])
-      -> Int
-      -> [(Int, Int)]
-  #-}
-{-# SPECIALIZE memoizeInt ::
-      IORef (IntMap.IntMap Bool)
-      -> IORef CacheStats
-      -> (Int -> Bool)
-      -> Int
-      -> Bool
-  #-}
-memoizeInt :: Memoizable b => IORef (IntMap.IntMap b) -> IORef CacheStats -> (Int -> b) -> Int -> b
+memoizeInt :: IORef (IntMap.IntMap b) -> IORef CacheStats -> (Int -> b) -> Int -> b
 memoizeInt cacheRef statsRef f x = unsafePerformIO $ do
   -- Atomic lookup-or-insert: check cache, compute if missing
   (result, isHit) <- atomicModifyIORef' cacheRef $ \cache ->

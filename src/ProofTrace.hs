@@ -1,7 +1,6 @@
 module ProofTrace
   ( ProofStep(..)
   , buildTrace
-  , labelText
   -- Accessor functions
   , psLabel
   , psFact
@@ -53,12 +52,6 @@ buildTrace env = mapMaybe toStep (reverse (peOrderedFacts env))
     toStep lbl = case HashMap.lookup lbl labels of
       Just (LFactEntry fe) -> Just (ProofStep fe symTbl)
       _ -> Nothing
-
-labelText :: Label -> String
-labelText lbl =
-  case lbl of
-    LFact (FactId n) -> "F" ++ show n
-    LDisj (DisjId n) -> "D" ++ show n
 
 instance Show ProofStep where
   show (ProofStep fe symTbl) =

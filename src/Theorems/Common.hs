@@ -8,16 +8,12 @@ module Theorems.Common
   , withArg2Num
   , withArg3Num
   -- Helpers
-  , fromMaybeList
   , asNum
-  , withNums
   , guardList
   -- Theorem constructors
   , hyper
   , stdThm
   ) where
-
-import Data.Maybe (fromMaybe)
 
 import Core
 
@@ -53,11 +49,6 @@ withNum3 fact f =
     [a, b, Num n] -> Just (f a b n)
     _ -> Nothing
 
--- | Unwrap Maybe list, defaulting to empty
-{-# INLINE fromMaybeList #-}
-fromMaybeList :: Maybe [a] -> [a]
-fromMaybeList = fromMaybe []
-
 -- | Create a HyperTheorem (dynamic rule)
 -- Uses the GADT-based Hyper pattern synonym
 {-# INLINE hyper #-}
@@ -75,12 +66,6 @@ stdThm name premises conclusions = Std (mkTheoremName name) premises conclusions
 asNum :: Arg -> Maybe Int
 asNum (Num n) = Just n
 asNum _ = Nothing
-
--- | Apply a function if all arguments are numeric
--- Usage: withNums [arg1, arg2, arg3] $ \[n1, n2, n3] -> ...
-{-# INLINE withNums #-}
-withNums :: [Arg] -> ([Int] -> a) -> Maybe a
-withNums args f = f <$> traverse asNum args
 
 -- | Extract 2 args from fact, convert last to Int, apply function
 -- Combines arg2 + asNum pattern

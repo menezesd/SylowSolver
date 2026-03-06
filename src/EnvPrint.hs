@@ -27,9 +27,9 @@ showProofTrace = concatMap showStep
           ]
             ++ if null (psDisAncestors step)
               then []
-              else ["    Disjunctions in history: " ++ show (map disjEntryText (psDisAncestors step))]
+              else ["    Disjunctions in history: " ++ show (map disjAncText (psDisAncestors step))]
             ++ [""]
       | otherwise = []
 
-disjEntryText :: (DisjId, Int) -> String
-disjEntryText (DisjId n, idx) = "(" ++ "D" ++ show n ++ "," ++ show idx ++ ")"
+disjAncText :: (DisjId, Int) -> String
+disjAncText (DisjId n, idx) = "(" ++ "D" ++ show n ++ "," ++ show idx ++ ")"

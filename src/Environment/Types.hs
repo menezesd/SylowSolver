@@ -85,6 +85,7 @@ import Core
 import Data.Map.Strict (Map)
 import Data.IntMap.Strict (IntMap)
 import Data.Set (Set)
+import Control.Applicative ((<|>))
 import Data.Hashable (Hashable(..), hash)
 import GHC.Generics (Generic)
 import qualified Data.HashMap.Strict as HashMap
@@ -119,9 +120,6 @@ instance Semigroup Provenance where
     , provDisAncestors = Set.union (provDisAncestors p1) (provDisAncestors p2)
     , provThm = provThm p1 <|> provThm p2
     }
-    where
-      Nothing <|> y = y
-      x <|> _ = x
 
 -- | A derived fact with full provenance information.
 --
@@ -194,7 +192,7 @@ instance Hashable DisjunctionKey where
 -- Smart constructor that computes and caches the hash
 mkDisjunctionKey :: [(PredName, [Arg])] -> Maybe TheoremName -> [(DisjId, Int)] -> DisjunctionKey
 mkDisjunctionKey facts thm ancestors =
-  let h = hash (map (\(n, as) -> (predNameText n, as)) facts, fmap theoremNameText thm, ancestors)
+  let h = hash (facts, thm, ancestors)
    in DisjunctionKey facts thm ancestors h
 
 -- | Database of all derived facts and disjunctions.
