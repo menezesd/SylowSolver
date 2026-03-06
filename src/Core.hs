@@ -301,7 +301,7 @@ data Arg
   | Var String
   | Exact String
   | Fresh String
-  | Num Int      -- Numeric argument for efficient number handling
+  | Num Integer   -- Numeric argument (arbitrary precision to avoid overflow)
   deriving stock (Eq, Ord, Show)
 
 instance Hashable Arg where
@@ -325,8 +325,8 @@ exact = Exact
 fresh :: String -> Arg
 fresh = Fresh
 
-num :: Int -> Arg
-num = Num
+num :: (Integral a) => a -> Arg
+num = Num . fromIntegral
 
 {-# INLINE argText #-}
 argText :: Arg -> String
@@ -339,12 +339,12 @@ argText arg =
     Num n -> show n
 
 -- Extract integer from Num argument, or Nothing for other types
-argInt :: Arg -> Maybe Int
+argInt :: Arg -> Maybe Integer
 argInt (Num n) = Just n
 argInt _ = Nothing
 
 -- Distinguish between numeric and string arguments
-argAtom :: Arg -> Either Int String
+argAtom :: Arg -> Either Integer String
 argAtom (Num n) = Left n
 argAtom a = Right (argText a)
 

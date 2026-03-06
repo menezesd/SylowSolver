@@ -21,6 +21,7 @@ thmList =
   [ simpleNotSimple           -- simple(G) ∧ not_simple(G) → false()
   , dividesContradiction      -- divides(n, m) where n ∤ m → false()
   , countingContradiction     -- Element counting overflow → false()
+  , countingContradiction3   -- Three-prime element counting → false()
   , ruleOutMaxIntersections   -- Intersection contradictions → false()
   , ruleOutNormalizerOfIntersectionOrder
 

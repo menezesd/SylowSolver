@@ -25,14 +25,15 @@ ruleSylow [factGroup, factOrder] =
       case nArg of
         Num groupOrder -> Just $
           let groupName = argText gArg
+              go = fromInteger groupOrder  -- convert to Int for number theory
               buildForP p =
-                let pk = p ^ maxPDivisor groupOrder p
+                let pk = p ^ maxPDivisor go p
                     base = facts
                       [ sylowPOrder (sym groupName) (num p) (num pk)
                       , sylowPSubgroup (fresh (show p)) (num p) (sym groupName)
                       , order (fresh (show p)) (num pk)
                       ]
-                    nps = numSylowMemo p groupOrder
+                    nps = numSylowMemo p go
                     disFacts =
                       [ numSylowFact (num p) (sym groupName) (num n)
                       | n <- nps
@@ -40,7 +41,7 @@ ruleSylow [factGroup, factOrder] =
                  in case disFacts of
                       [single] -> base ++ [CFact single]
                       _ -> base ++ [disj disFacts]
-           in concatMap buildForP (primeFactorsMemo groupOrder)
+           in concatMap buildForP (primeFactorsMemo go)
         _ -> Nothing -- Not a Num arg
     _ -> Nothing
 ruleSylow _ = Nothing
@@ -57,14 +58,9 @@ ruleSingleSylowNotSimple [factSylow, _factNum, factOrder] =
     p <- asNum pArg
     n0 <- withArg2Num factOrder (\_ n -> n)
     let g = argText gArg
-        pPower = isPowerOfP n0 p
-    if n0 == 0 || pPower then Nothing else Just [CFact (notSimple (sym g))]
-  where
-    isPowerOfP n p'
-      | n == 1 = True
-      | n <= 0 = False
-      | n `mod` p' /= 0 = False
-      | otherwise = isPowerOfP (n `div` p') p'
+    -- Skip only prime-order groups (which are simple).
+    -- p-groups of order p^k (k>=2) are not simple (non-trivial center).
+    if n0 <= 1 || n0 == p then Nothing else Just [CFact (notSimple (sym g))]
 ruleSingleSylowNotSimple _ = Nothing
 
 singleSylowNotSimple :: Thm
@@ -106,12 +102,11 @@ ruleAlternatingOrder [factAlt] = do
   -- Skip very large n to avoid computing huge factorials
   if n > 100 then Nothing else do
     let a = argText aArg
-        factorial' :: Integer -> Integer
-        factorial' m = foldl' (*) 1 [1 .. m]
+        orderVal :: Integer
         orderVal
           | n == 1 = 1
-          | otherwise = factorial' (fromIntegral n) `div` 2
-    Just [CFact (order (sym a) (num (fromInteger orderVal)))]
+          | otherwise = product [1 .. n] `div` 2
+    Just [CFact (order (sym a) (Num orderVal))]
 ruleAlternatingOrder _ = Nothing
 
 alternatingOrder :: Thm

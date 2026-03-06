@@ -32,9 +32,9 @@ ruleNormalizerSylowIntersection [f1, _f2, f3, f4, f5, f6] = do
             ]
           possible =
             [ order (fresh "T") (num d)
-            | d <- divisorsMemo n
-            , d `mod` pk == 0
-            , d > pk
+            | d <- divisorsMemo (fromInteger n)
+            , fromIntegral d `mod` pk == 0
+            , fromIntegral d > pk
             ]
           extra = if null possible then [] else [CDisj (Disjunction possible)]
        in Just (base ++ extra)
@@ -79,7 +79,7 @@ ruleRuleOutNormalizerOfIntersectionOrder [factNorm, factOrder] = do
   (_tArg2, kArg) <- arg2 factOrder
   p <- asNum pArg
   k <- asNum kArg
-  let nps = numSylowMemo p k
+  let nps = numSylowMemo (fromInteger p) (fromInteger k)
   case nps of
     [_] -> Just [CFact falseFact]
     _ -> Nothing

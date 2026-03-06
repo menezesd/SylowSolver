@@ -1,6 +1,7 @@
 module Theorems.Counting
   ( countOrderPkElements
   , countingContradiction
+  , countingContradiction3
   , multipleSylows
   , possibleMaxIntersections
   , intersectionOfSylows
@@ -20,9 +21,8 @@ ruleCountOrderPkElements [factSylow, factNum, factOrder] = do
   pk <- withArg2Num factOrder (\_ pkArg -> pkArg)
   let g = argText gArg
       lowerBound
-        | pk == p = (p - 1) * nP
-        | nP == 1 = pk - 1
-        | otherwise = pk
+        | nP == 1   = pk - 1            -- unique Sylow: all non-identity elements
+        | otherwise = nP * (pk - pk `div` p)  -- elements in exactly one Sylow subgroup
   pure [CFact (orderPkLowerBound (sym g) (num p) (num lowerBound))]
 ruleCountOrderPkElements _ = Nothing
 
@@ -52,6 +52,29 @@ countingContradiction = hyper "counting_contradiction"
   , order (var "G") (var "n")
   ]
   ruleCountingContradiction
+
+-- | Three-prime counting contradiction: sum element bounds for 3 distinct primes
+ruleCountingContradiction3 :: [Fact] -> Maybe [Conclusion]
+ruleCountingContradiction3 [fact1, fact2, fact3, factOrder] = do
+  (p1Arg, n1) <- withArg3Num fact1 (\_ p n -> (p, n))
+  (p2Arg, n2) <- withArg3Num fact2 (\_ p n -> (p, n))
+  (p3Arg, n3) <- withArg3Num fact3 (\_ p n -> (p, n))
+  n <- withArg2Num factOrder (\_ total -> total)
+  p1 <- asNum p1Arg
+  p2 <- asNum p2Arg
+  p3 <- asNum p3Arg
+  guard (p1 /= p2 && p1 /= p3 && p2 /= p3 && n1 + n2 + n3 + 1 > n)
+  pure [CFact falseFact]
+ruleCountingContradiction3 _ = Nothing
+
+countingContradiction3 :: Thm
+countingContradiction3 = hyper "counting_contradiction_3"
+  [ orderPkLowerBound (var "G") (var "p1") (var "N1")
+  , orderPkLowerBound (var "G") (var "p2") (var "N2")
+  , orderPkLowerBound (var "G") (var "p3") (var "N3")
+  , order (var "G") (var "n")
+  ]
+  ruleCountingContradiction3
 
 ruleMultipleSylows :: [Fact] -> Maybe [Conclusion]
 ruleMultipleSylows [factNum] = do

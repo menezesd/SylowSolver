@@ -35,7 +35,7 @@ arg3 fact =
 
 -- | Extract 2 args where the last is numeric, apply function if successful
 {-# INLINE withNum2 #-}
-withNum2 :: Fact -> (Arg -> Int -> a) -> Maybe a
+withNum2 :: Fact -> (Arg -> Integer -> a) -> Maybe a
 withNum2 fact f =
   case factArgs fact of
     [a, Num n] -> Just (f a n)
@@ -43,7 +43,7 @@ withNum2 fact f =
 
 -- | Extract 3 args where the last is numeric, apply function if successful
 {-# INLINE withNum3 #-}
-withNum3 :: Fact -> (Arg -> Arg -> Int -> a) -> Maybe a
+withNum3 :: Fact -> (Arg -> Arg -> Integer -> a) -> Maybe a
 withNum3 fact f =
   case factArgs fact of
     [a, b, Num n] -> Just (f a b n)
@@ -63,14 +63,14 @@ stdThm name premises conclusions = Std (mkTheoremName name) premises conclusions
 
 -- | Extract numeric value from an Arg
 {-# INLINE asNum #-}
-asNum :: Arg -> Maybe Int
+asNum :: Arg -> Maybe Integer
 asNum (Num n) = Just n
 asNum _ = Nothing
 
--- | Extract 2 args from fact, convert last to Int, apply function
+-- | Extract 2 args from fact, convert last to Integer, apply function
 -- Combines arg2 + asNum pattern
 {-# INLINE withArg2Num #-}
-withArg2Num :: Fact -> (Arg -> Int -> a) -> Maybe a
+withArg2Num :: Fact -> (Arg -> Integer -> a) -> Maybe a
 withArg2Num fact f = do
   (a, b) <- arg2 fact
   n <- asNum b
@@ -79,7 +79,7 @@ withArg2Num fact f = do
 -- | Extract 3 args from fact, convert last to Int, apply function
 -- Combines arg3 + asNum pattern
 {-# INLINE withArg3Num #-}
-withArg3Num :: Fact -> (Arg -> Arg -> Int -> a) -> Maybe a
+withArg3Num :: Fact -> (Arg -> Arg -> Integer -> a) -> Maybe a
 withArg3Num fact f = do
   (a, b, c) <- arg3 fact
   n <- asNum c

@@ -249,54 +249,64 @@
                                          (list p-arg g-arg (num count))))))
            '())))))
 
-;;; Counting contradiction: sum ALL element bounds for a group.
-;;; When a new order_pk_lower_bound is derived, look up all compatible
-;;; bounds from the environment and check if total > |G|.
+;;; Pairwise counting contradiction: sum of two element bounds > |G|
 (define thm-counting-contradiction
   (make-hyper-theorem
    'counting_contradiction
    (list (make-fact 'order (list (var "G") (var "n")))
-         (make-fact 'order_pk_lower_bound (list (var "p") (var "G") (var "cp"))))
+         (make-fact 'order_pk_lower_bound (list (var "p") (var "G") (var "cp")))
+         (make-fact 'order_pk_lower_bound (list (var "q") (var "G") (var "cq"))))
    (lambda (facts subst env)
      (let ((n-arg (subst-ref subst "n"))
-           (g-arg (subst-ref subst "G"))
-           (trigger-fact (cadr facts)))
-       (if (not (numeric-arg? n-arg))
-           '()
-           (let* ((n (arg-value n-arg))
-                  (trigger-ancestors (fact-dis-ancestors trigger-fact))
-                  ;; Look up all order_pk_lower_bound facts for this group
-                  (all-bounds (env-lookup env (cons 'order_pk_lower_bound 3)))
-                  ;; Filter: same group, numeric, compatible ancestors
-                  (compatible-bounds
-                   (filter
-                    (lambda (f)
-                      (let ((args (fact-args f)))
-                        (and (= (length args) 3)
-                             (arg-equal? (cadr args) g-arg)
-                             (numeric-arg? (car args))
-                             (numeric-arg? (caddr args))
-                             (compatible-ancestors? (list trigger-fact f)))))
-                    all-bounds))
-                  ;; Deduplicate by prime: keep highest bound per prime
-                  (best-by-prime (make-hash-table eqv?)))
-             ;; Build best bound per prime
-             (for-each
-              (lambda (f)
-                (let* ((p (arg-value (car (fact-args f))))
-                       (c (arg-value (caddr (fact-args f))))
-                       (existing (hash-table-ref/default best-by-prime p 0)))
-                  (when (> c existing)
-                    (hash-table-set! best-by-prime p c))))
-              compatible-bounds)
-             ;; Sum all bounds + 1 for identity
-             (let ((total (+ 1 (hash-table-fold best-by-prime
-                                                 (lambda (k v acc) (+ v acc))
-                                                 0))))
-               (if (and (> (hash-table-size best-by-prime) 1)
-                        (> total n))
-                   (list (conc-fact (make-fact 'false '())))
-                   '()))))))))
+           (p-arg (subst-ref subst "p"))
+           (q-arg (subst-ref subst "q"))
+           (cp-arg (subst-ref subst "cp"))
+           (cq-arg (subst-ref subst "cq")))
+       (if (and (numeric-arg? n-arg)
+                (numeric-arg? p-arg)
+                (numeric-arg? q-arg)
+                (numeric-arg? cp-arg)
+                (numeric-arg? cq-arg)
+                (not (= (arg-value p-arg) (arg-value q-arg))))
+           (let ((n (arg-value n-arg))
+                 (cp (arg-value cp-arg))
+                 (cq (arg-value cq-arg)))
+             (if (> (+ cp cq 1) n)
+                 (list (conc-fact (make-fact 'false '())))
+                 '()))
+           '())))))
+
+;;; Three-prime counting contradiction: sum of three element bounds > |G|
+(define thm-counting-contradiction-3
+  (make-hyper-theorem
+   'counting_contradiction_3
+   (list (make-fact 'order (list (var "G") (var "n")))
+         (make-fact 'order_pk_lower_bound (list (var "p1") (var "G") (var "c1")))
+         (make-fact 'order_pk_lower_bound (list (var "p2") (var "G") (var "c2")))
+         (make-fact 'order_pk_lower_bound (list (var "p3") (var "G") (var "c3"))))
+   (lambda (facts subst env)
+     (let ((n-arg (subst-ref subst "n"))
+           (p1-arg (subst-ref subst "p1"))
+           (p2-arg (subst-ref subst "p2"))
+           (p3-arg (subst-ref subst "p3"))
+           (c1-arg (subst-ref subst "c1"))
+           (c2-arg (subst-ref subst "c2"))
+           (c3-arg (subst-ref subst "c3")))
+       (if (and (numeric-arg? n-arg)
+                (numeric-arg? p1-arg) (numeric-arg? p2-arg) (numeric-arg? p3-arg)
+                (numeric-arg? c1-arg) (numeric-arg? c2-arg) (numeric-arg? c3-arg)
+                (let ((p1 (arg-value p1-arg))
+                      (p2 (arg-value p2-arg))
+                      (p3 (arg-value p3-arg)))
+                  (and (not (= p1 p2)) (not (= p1 p3)) (not (= p2 p3)))))
+           (let ((n (arg-value n-arg))
+                 (c1 (arg-value c1-arg))
+                 (c2 (arg-value c2-arg))
+                 (c3 (arg-value c3-arg)))
+             (if (> (+ c1 c2 c3 1) n)
+                 (list (conc-fact (make-fact 'false '())))
+                 '()))
+           '())))))
 
 ;;; ============================================================
 ;;; EMBEDDING IN ALTERNATING GROUPS
@@ -387,6 +397,7 @@
         thm-subgroup-index
         thm-count-pk-elements
         thm-counting-contradiction
+        thm-counting-contradiction-3
         thm-embed-alternating
         thm-alternating-order
         thm-alternating-simple
