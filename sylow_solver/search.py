@@ -421,9 +421,23 @@ def match_facts_to_template(
     return matches, dicts
 
 
+def _is_in_closed_branch(
+    ancestors: Set[Tuple[str, int]],
+    closed_branches: List[FrozenSet[Tuple[str, int]]],
+) -> bool:
+    """Check if a fact's case context is in an already-closed branch."""
+    for closed in closed_branches:
+        if closed.issubset(ancestors):
+            return True
+    return False
+
+
 def auto_solve(pf_envir: ProofEnvironment) -> bool:
     """
     Optimized agenda-based proof search using trigger indexing and batching.
+
+    Uses closed-branch pruning: once false() is derived in a disjunction branch,
+    all facts in that branch are skipped to avoid wasted work.
     """
     config = pf_envir.config
 
@@ -436,6 +450,7 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
 
     work_queue: deque = deque(pf_envir.facts)
     processed_labels: Set[str] = set()
+    closed_branches: List[FrozenSet[Tuple[str, int]]] = []
 
     iteration = 0
     while work_queue and iteration < config.max_iterations:
@@ -458,6 +473,8 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
                 continue
             if fact.label in processed_labels:
                 continue
+            if fact.dis_ancestors and _is_in_closed_branch(fact.dis_ancestors, closed_branches):
+                continue
 
             batch.append(fact)
             processed_labels.add(fact.label)
@@ -476,6 +493,8 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
                     if new_facts := pf_envir.apply_thm(thm, match):
                         for item in new_facts:
                             if isinstance(item, Fact):
+                                if item.name == "false" and item.dis_ancestors:
+                                    closed_branches.append(frozenset(item.dis_ancestors))
                                 work_queue.append(item)
                             elif isinstance(item, Disjunction):
                                 work_queue.extend(item.facts)

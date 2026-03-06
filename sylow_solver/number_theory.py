@@ -1,8 +1,10 @@
 """Number-theoretic utilities for Sylow theorem computations."""
 
+from functools import cache
 from typing import List, Tuple
 
 
+@cache
 def divisors(n: int) -> List[int]:
     """Computes the sorted list of divisors of n in O(sqrt(n)) time."""
     if n <= 0:
@@ -18,6 +20,7 @@ def divisors(n: int) -> List[int]:
     return sorted(divs)
 
 
+@cache
 def is_prime(p: int) -> bool:
     """Determines if a number is prime using trial division."""
     if p < 2:
@@ -58,6 +61,7 @@ def max_p_divisor(n: int, p: int) -> int:
     return k
 
 
+@cache
 def prime_factors(n: int) -> List[int]:
     """Computes the sorted list of prime factors of n in O(sqrt(n)) time."""
     if n <= 1:
@@ -79,6 +83,7 @@ def prime_factors(n: int) -> List[int]:
     return factors
 
 
+@cache
 def prime_factorization(n: int) -> List[Tuple[int, int]]:
     """Computes the prime factorization of n as a list of (prime, exponent) tuples."""
     if n <= 1:
@@ -104,6 +109,7 @@ def prime_factorization(n: int) -> List[Tuple[int, int]]:
     return factorization
 
 
+@cache
 def num_sylow(p: int, n: int) -> List[int]:
     """Computes possible numbers of Sylow p-subgroups in a group of order n."""
     return [d for d in divisors(n) if d % p == 1]

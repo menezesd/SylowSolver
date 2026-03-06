@@ -490,27 +490,30 @@ rule_out_normalizer_of_intersection_order = HyperTheorem(
 
 
 DEFAULT_THEOREMS: List[Union[Theorem, HyperTheorem]] = [
-    sylow_theorem,
-    single_sylow_not_simple,
+    # --- Closing theorems (produce false()) - checked first to close branches early ---
     simple_not_simple,
-    alternating_order,
-    embed_in_An,
-    lagrange,
     divides_contradiction,
-    alternating_simple,
+    counting_contradiction,
+    rule_out_max_intersections,
+    rule_out_normalizer_of_intersection_order,
+    # --- Structural theorems (transform/derive key facts) ---
+    single_sylow_not_simple,
+    normal_subgroup_to_not_simple,
+    lagrange,
     subgroup_index,
+    alternating_order,
+    # --- Expanding theorems (generate new facts/disjunctions) ---
+    sylow_theorem,
+    embed_in_An,
+    alternating_simple,
     coset_action,
     simple_group_action,
     count_order_pk_elements,
-    counting_contradiction,
     multiple_sylows,
     possible_max_intersections,
     intersection_of_sylows,
     normalizer_sylow_intersection,
     normalizer_everything_implies_normal,
-    normal_subgroup_to_not_simple,
-    rule_out_max_intersections,
-    rule_out_normalizer_of_intersection_order,
 ]
 
 DEFAULT_THEOREM_DICT: Dict[str, Union[Theorem, HyperTheorem]] = {
