@@ -1,14 +1,14 @@
 """Number-theoretic utilities for Sylow theorem computations."""
 
 from functools import cache
-from typing import List, Tuple
+from typing import Tuple
 
 
 @cache
-def divisors(n: int) -> List[int]:
-    """Computes the sorted list of divisors of n in O(sqrt(n)) time."""
+def divisors(n: int) -> Tuple[int, ...]:
+    """Computes the sorted tuple of divisors of n in O(sqrt(n)) time."""
     if n <= 0:
-        return []
+        return ()
     divs = []
     i = 1
     while i * i <= n:
@@ -17,7 +17,7 @@ def divisors(n: int) -> List[int]:
             if i != n // i:
                 divs.append(n // i)
         i += 1
-    return sorted(divs)
+    return tuple(sorted(divs))
 
 
 @cache
@@ -37,10 +37,10 @@ def is_prime(p: int) -> bool:
     return True
 
 
-def primes(n: int) -> List[int]:
-    """Generates a list of prime numbers up to and including n."""
+def primes(n: int) -> Tuple[int, ...]:
+    """Generates a tuple of prime numbers up to and including n."""
     if n < 2:
-        return []
+        return ()
     sieve = [True] * (n + 1)
     sieve[0] = sieve[1] = False
     i = 2
@@ -49,7 +49,7 @@ def primes(n: int) -> List[int]:
             for j in range(i * i, n + 1, i):
                 sieve[j] = False
         i += 1
-    return [i for i, is_p in enumerate(sieve) if is_p]
+    return tuple(i for i, is_p in enumerate(sieve) if is_p)
 
 
 def max_p_divisor(n: int, p: int) -> int:
@@ -62,10 +62,10 @@ def max_p_divisor(n: int, p: int) -> int:
 
 
 @cache
-def prime_factors(n: int) -> List[int]:
-    """Computes the sorted list of prime factors of n in O(sqrt(n)) time."""
+def prime_factors(n: int) -> Tuple[int, ...]:
+    """Computes the sorted tuple of prime factors of n in O(sqrt(n)) time."""
     if n <= 1:
-        return []
+        return ()
     factors = []
     if n % 2 == 0:
         factors.append(2)
@@ -80,14 +80,14 @@ def prime_factors(n: int) -> List[int]:
         i += 2
     if n > 1:
         factors.append(n)
-    return factors
+    return tuple(factors)
 
 
 @cache
-def prime_factorization(n: int) -> List[Tuple[int, int]]:
-    """Computes the prime factorization of n as a list of (prime, exponent) tuples."""
+def prime_factorization(n: int) -> Tuple[Tuple[int, int], ...]:
+    """Computes the prime factorization of n as a tuple of (prime, exponent) pairs."""
     if n <= 1:
-        return []
+        return ()
     factorization = []
     if n % 2 == 0:
         exp = 0
@@ -106,13 +106,13 @@ def prime_factorization(n: int) -> List[Tuple[int, int]]:
         i += 2
     if n > 1:
         factorization.append((n, 1))
-    return factorization
+    return tuple(factorization)
 
 
 @cache
-def num_sylow(p: int, n: int) -> List[int]:
+def num_sylow(p: int, n: int) -> Tuple[int, ...]:
     """Computes possible numbers of Sylow p-subgroups in a group of order n."""
-    return [d for d in divisors(n) if d % p == 1]
+    return tuple(d for d in divisors(n) if d % p == 1)
 
 
 def p_killable(p: int, n: int) -> bool:
@@ -127,9 +127,7 @@ def sylow_killable(n: int) -> bool:
     """Determines if some Sylow p-subgroup is automatically normal."""
     if n == 1:
         return True
-    p_factors = prime_factors(n)
-    p_factors.reverse()
-    for p in p_factors:
+    for p in reversed(prime_factors(n)):
         if p_killable(p, n):
             return True
     return False
