@@ -573,4 +573,3 @@ def _unify_facts(template: Fact, fact: Fact, substitution: Substitution) -> bool
             substitution.insert(t_arg, f_arg)
 
     return True
-

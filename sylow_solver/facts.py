@@ -46,7 +46,6 @@ class Fact:
         return hash((self.name, tuple(self.args)))
 
 
-
 @dataclass(frozen=True)
 class DisjunctionKey:
     """Immutable structural key for efficient disjunction deduplication."""
