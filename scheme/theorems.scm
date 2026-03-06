@@ -106,8 +106,7 @@
   (make-hyper-theorem
    'sylow
    (list (make-fact 'group (list (var "G")))
-         (make-fact 'order (list (var "G") (var "n")))
-         (make-fact 'simple (list (var "G"))))
+         (make-fact 'order (list (var "G") (var "n"))))
    (lambda (facts subst env)
      (let ((g-arg (subst-ref subst "G"))
            (n-arg (subst-ref subst "n")))
@@ -283,23 +282,25 @@
 ;;; EMBEDDING IN ALTERNATING GROUPS
 ;;; ============================================================
 
-;;; A simple group G embeds in A_n where n = [G:H] for any subgroup H
+;;; A simple group G with n_p Sylow subgroups (n_p > 1) embeds in A_{n_p}
+;;; via the conjugation action on Sylow subgroups.
 (define thm-embed-alternating
   (make-hyper-theorem
    'embed_An
-   (list (make-fact 'simple (list (var "G")))
-         (make-fact 'index (list (var "G") (var "H") (var "k"))))
+   (list (make-fact 'num_sylow (list (var "p") (var "G") (var "np")))
+         (make-fact 'simple (list (var "G"))))
    (lambda (facts subst env)
      (let ((g-arg (subst-ref subst "G"))
-           (k-arg (subst-ref subst "k")))
-       (if (and (numeric-arg? k-arg) (>= (arg-value k-arg) 3))
+           (np-arg (subst-ref subst "np")))
+       (if (and (numeric-arg? np-arg) (> (arg-value np-arg) 1))
            (let ((an (env-fresh-symbol! env "A")))
-             (list (conc-fact (make-fact 'alternating_group
-                                         (list an k-arg)))
-                   (conc-fact (make-fact 'subgroup (list g-arg an)))))
+             (list (conc-fact (make-fact 'subgroup (list g-arg an)))
+                   (conc-fact (make-fact 'alternating_group
+                                         (list an np-arg)))))
            '())))))
 
 ;;; Order of alternating group A_n is n!/2
+;;; Skip n > 100 to avoid computing huge factorials
 (define thm-alternating-order
   (make-hyper-theorem
    'alternating_order
@@ -307,7 +308,7 @@
    (lambda (facts subst env)
      (let ((a-arg (subst-ref subst "A"))
            (n-arg (subst-ref subst "n")))
-       (if (numeric-arg? n-arg)
+       (if (and (numeric-arg? n-arg) (<= (arg-value n-arg) 100))
            (let ((n (arg-value n-arg)))
              (list (conc-fact (make-fact 'order
                                          (list a-arg (num (/ (factorial n) 2)))))))
@@ -326,6 +327,33 @@
            '())))))
 
 ;;; ============================================================
+;;; COSET ACTION AND SIMPLE GROUP ACTION
+;;; ============================================================
+
+;;; index(G, H, n) -> transitive_action(G, n)
+(define thm-coset-action
+  (make-theorem
+   'coset_action
+   (list (make-fact 'index (list (var "G") (var "H") (var "n"))))
+   (list (make-fact 'transitive_action (list (var "G") (var "n"))))))
+
+;;; transitive_action(G, n) + simple(G) -> subgroup(G, A_n) + alternating_group(A_n, n)
+;;; (A simple group acts faithfully, so embeds in A_n)
+(define thm-simple-group-action
+  (make-hyper-theorem
+   'simple_group_action
+   (list (make-fact 'transitive_action (list (var "G") (var "n")))
+         (make-fact 'simple (list (var "G"))))
+   (lambda (facts subst env)
+     (let ((g-arg (subst-ref subst "G"))
+           (n-arg (subst-ref subst "n")))
+       (if (and (numeric-arg? n-arg) (> (arg-value n-arg) 1))
+           (let ((an (env-fresh-symbol! env "A")))
+             (list (conc-fact (make-fact 'subgroup (list g-arg an)))
+                   (conc-fact (make-fact 'alternating_group (list an n-arg)))))
+           '())))))
+
+;;; ============================================================
 ;;; ALL THEOREMS
 ;;; ============================================================
 
@@ -341,7 +369,9 @@
         thm-counting-contradiction
         thm-embed-alternating
         thm-alternating-order
-        thm-alternating-simple))
+        thm-alternating-simple
+        thm-coset-action
+        thm-simple-group-action))
 
 ;;; ============================================================
 ;;; NUMBER THEORY UTILITIES
@@ -372,15 +402,16 @@
        (loop n (+ p 1) factors)))))
 
 (define (divisors n)
-  "Return list of all divisors of n."
-  (let loop ((i 1) (divs '()))
+  "Return sorted list of all divisors of n."
+  (let loop ((i 1) (small '()) (large '()))
     (cond
-      ((> (* i i) n) (reverse divs))
+      ((> (* i i) n)
+       (append (reverse small) large))
       ((zero? (modulo n i))
        (if (= i (/ n i))
-           (loop (+ i 1) (cons i divs))
-           (loop (+ i 1) (cons (/ n i) (cons i divs)))))
-      (else (loop (+ i 1) divs)))))
+           (loop (+ i 1) (cons i small) large)
+           (loop (+ i 1) (cons i small) (cons (/ n i) large))))
+      (else (loop (+ i 1) small large)))))
 
 (define (highest-power-dividing p n)
   "Return the highest power of p that divides n."

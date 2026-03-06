@@ -188,23 +188,25 @@
 (define (compatible-ancestors? facts)
   "Check that facts don't mix incompatible disjunction branches."
   (let ((seen (make-hash-table equal?)))
-    (call/cc
-     (lambda (return)
-       (for-each
-        (lambda (f)
-          (hash-table-walk
-           (fact-dis-ancestors f)
-           (lambda (key val)
-             (let ((label (car key))
-                   (idx (cdr key)))
-               (let ((existing (hash-table-ref/default seen label 'none)))
-                 (cond
-                   ((eq? existing 'none)
-                    (hash-table-set! seen label idx))
-                   ((not (= existing idx))
-                    (return #f))))))))  ; Incompatible!
-        facts)
-       #t))))  ; All compatible
+    (let loop-facts ((fs facts))
+      (if (null? fs)
+          #t
+          (let ((entries (hash-table->alist (fact-dis-ancestors (car fs)))))
+            (let loop-entries ((es entries))
+              (if (null? es)
+                  (loop-facts (cdr fs))
+                  (let* ((key (caar es))
+                         (label (car key))
+                         (idx (cdr key))
+                         (existing (hash-table-ref/default seen label 'none)))
+                    (cond
+                      ((eq? existing 'none)
+                       (hash-table-set! seen label idx)
+                       (loop-entries (cdr es)))
+                      ((not (= existing idx))
+                       #f)
+                      (else
+                       (loop-entries (cdr es))))))))))))  ; All compatible
 
 ;;; Merge the dis-ancestors from multiple facts
 (define (merge-ancestors facts)

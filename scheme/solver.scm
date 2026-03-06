@@ -8,7 +8,7 @@
 ;;; ============================================================
 
 (define-record-type <env>
-  (%make-env facts fact-index disjunctions disj-meta
+  (%make-env facts fact-index disjunctions disj-meta disj-key-index
              goal goal-combos closed-branches
              fact-counter disj-counter symbol-counter
              trigger-index iterations)
@@ -17,6 +17,7 @@
   (fact-index env-fact-index)
   (disjunctions env-disjunctions env-disjunctions-set!)
   (disj-meta env-disj-meta)
+  (disj-key-index env-disj-key-index)
   (goal env-goal)
   (goal-combos env-goal-combos env-goal-combos-set!)
   (closed-branches env-closed-branches env-closed-branches-set!)
@@ -33,6 +34,7 @@
               (make-hash-table equal?)         ; fact-index
               '()                              ; disjunctions
               (make-hash-table equal?)         ; disj-meta
+              (make-hash-table equal?)         ; disj-key-index
               goal                             ; goal
               '()                              ; goal-combos
               '()                              ; closed-branches
@@ -44,6 +46,43 @@
     ;; Add initial facts
     (for-each (lambda (f) (env-add-fact! env f #f)) initial-facts)
     env))
+
+;;; ============================================================
+;;; ANCESTOR UTILITIES
+;;; ============================================================
+
+(define (ancestors-equal? a1 a2)
+  "Check if two ancestor hash tables have the same entries.
+   Uses size check first for fast rejection, then iterates entries."
+  (and (= (hash-table-size a1) (hash-table-size a2))
+       (let loop ((entries (hash-table->alist a1)))
+         (if (null? entries)
+             #t
+             (let* ((k (caar entries))
+                    (v (cdar entries)))
+               (if (equal? (hash-table-ref/default a2 k 'none) v)
+                   (loop (cdr entries))
+                   #f))))))
+
+(define (ht-subset? small big)
+  "Check if every entry in small hash table exists in big with same value."
+  (let loop ((entries (hash-table->alist small)))
+    (if (null? entries)
+        #t
+        (let* ((k (caar entries))
+               (v (cdar entries)))
+          (if (equal? (hash-table-ref/default big k 'none) v)
+              (loop (cdr entries))
+              #f)))))
+
+(define (branch-is-closed? env ancestors)
+  "Check if fact belongs to a branch that already has a contradiction."
+  (let loop ((closed (env-closed-branches env)))
+    (if (null? closed)
+        #f
+        (if (ht-subset? (car closed) ancestors)
+            #t
+            (loop (cdr closed))))))
 
 ;;; ============================================================
 ;;; LABEL GENERATION
@@ -71,38 +110,44 @@
 
 (define (env-add-fact! env fact new?)
   "Add a fact to the environment. Returns #t if it's new."
-  ;; Assign label if needed
-  (unless (fact-label fact)
-    (fact-label-set! fact (env-new-fact-label! env)))
+  ;; Skip facts in closed branches (unless it's a contradiction itself)
+  (if (and new?
+           (not (eq? (fact-predicate fact) 'false))
+           (branch-is-closed? env (fact-dis-ancestors fact)))
+      #f  ; Branch already closed
+      (begin
+        ;; Assign label if needed
+        (unless (fact-label fact)
+          (fact-label-set! fact (env-new-fact-label! env)))
 
-  ;; Check for duplicates
-  (let* ((key (fact-key fact))
-         (existing (hash-table-ref/default (env-fact-index env) key '())))
-    (if (any (lambda (f) (and (fact-equal? f fact)
-                               (equal? (hash-table->alist (fact-dis-ancestors f))
-                                       (hash-table->alist (fact-dis-ancestors fact)))))
-             existing)
-        #f  ; Duplicate
-        (begin
-          ;; Add to facts list
-          (env-facts-set! env (append (env-facts env) (list fact)))
+        ;; Check for duplicates
+        (let* ((key (fact-key fact))
+               (existing (hash-table-ref/default (env-fact-index env) key '())))
+          (if (any (lambda (f) (and (fact-equal? f fact)
+                                     (ancestors-equal? (fact-dis-ancestors f)
+                                                        (fact-dis-ancestors fact))))
+                   existing)
+              #f  ; Duplicate
+              (begin
+                ;; Add to facts list
+                (env-facts-set! env (cons fact (env-facts env)))
 
-          ;; Add to index
-          (hash-table-set! (env-fact-index env) key (cons fact existing))
+                ;; Add to index
+                (hash-table-set! (env-fact-index env) key (cons fact existing))
 
-          ;; Check for contradiction
-          (when (eq? (fact-predicate fact) 'false)
-            (env-closed-branches-set!
-             env (cons (hash-table-copy (fact-dis-ancestors fact))
-                       (env-closed-branches env))))
+                ;; Check for contradiction
+                (when (eq? (fact-predicate fact) 'false)
+                  (env-closed-branches-set!
+                   env (cons (hash-table-copy (fact-dis-ancestors fact))
+                             (env-closed-branches env))))
 
-          ;; Check for goal
-          (when (fact-matches-goal? fact (env-goal env))
-            (env-goal-combos-set!
-             env (cons (hash-table-copy (fact-dis-ancestors fact))
-                       (env-goal-combos env))))
+                ;; Check for goal
+                (when (fact-matches-goal? fact (env-goal env))
+                  (env-goal-combos-set!
+                   env (cons (hash-table-copy (fact-dis-ancestors fact))
+                             (env-goal-combos env))))
 
-          #t))))  ; New fact added
+                #t))))))  ; New fact added
 
 (define (env-lookup env key)
   "Look up facts by (predicate . arity) key."
@@ -124,36 +169,54 @@
 
 (define (env-add-disjunction! env disj theorem-name deps parent-ancestors)
   "Add a disjunction, creating branch facts."
-  (let ((label (env-new-disj-label! env)))
-    (disj-label-set! disj label)
+  (let* ((key (disjunction-key disj parent-ancestors theorem-name))
+         (existing (hash-table-ref/default (env-disj-key-index env) key #f)))
+    (if existing
+        '()
+        (let ((label (env-new-disj-label! env)))
+          (disj-label-set! disj label)
+          (hash-table-set! (env-disj-key-index env) key label)
 
-    ;; Store metadata
-    (hash-table-set! (env-disj-meta env) label
-                     (infer-disj-meta (disj-facts disj)))
+          ;; Store metadata
+          (hash-table-set! (env-disj-meta env) label
+                           (infer-disj-meta (disj-facts disj)))
 
-    ;; Add to disjunctions list
-    (env-disjunctions-set! env (append (env-disjunctions env) (list disj)))
+          ;; Add to disjunctions list
+          (env-disjunctions-set! env (cons disj (env-disjunctions env)))
 
-    ;; Create branch facts
-    (let loop ((branch-facts (disj-facts disj))
-               (branch-idx 0)
-               (new-facts '()))
-      (if (null? branch-facts)
-          new-facts
-          (let* ((bf (car branch-facts))
-                 (new-ancestors (hash-table-copy parent-ancestors)))
-            ;; Add this branch to ancestry
-            (hash-table-set! new-ancestors (cons label branch-idx) #t)
+          ;; Create branch facts
+          (let loop ((branch-facts (disj-facts disj))
+                     (branch-idx 0)
+                     (new-facts '()))
+            (if (null? branch-facts)
+                new-facts
+                (let* ((bf (car branch-facts))
+                       (new-ancestors (hash-table-copy parent-ancestors)))
+                  ;; Add this branch to ancestry
+                  (hash-table-set! new-ancestors (cons label branch-idx) #t)
 
-            ;; Set up the branch fact
-            (fact-deps-set! bf (list label))
-            (fact-dis-ancestors-set! bf new-ancestors)
-            (fact-theorem-set! bf theorem-name)
+                  ;; Set up the branch fact
+                  (fact-deps-set! bf (list label))
+                  (fact-dis-ancestors-set! bf new-ancestors)
+                  (fact-theorem-set! bf theorem-name)
 
-            ;; Add to environment
-            (if (env-add-fact! env bf #t)
-                (loop (cdr branch-facts) (+ branch-idx 1) (cons bf new-facts))
-                (loop (cdr branch-facts) (+ branch-idx 1) new-facts)))))))
+                  ;; Add to environment
+                  (if (env-add-fact! env bf #t)
+                      (loop (cdr branch-facts) (+ branch-idx 1) (cons bf new-facts))
+                      (loop (cdr branch-facts) (+ branch-idx 1) new-facts)))))))))
+
+(define (disjunction-key disj parent-ancestors theorem-name)
+  "Build a canonical key for disjunction deduplication."
+  (let* ((facts-key
+          (sort (map pp-fact (disj-facts disj)) string<?))
+         (anc-key
+          (sort (map (lambda (entry)
+                       (let ((k (car entry)))
+                         (string-append (car k) "." (number->string (cdr k)))))
+                     (hash-table->alist parent-ancestors))
+                string<?))
+         (thm-key (if theorem-name (symbol->string theorem-name) "")))
+    (list facts-key anc-key thm-key)))
 
 ;;; ============================================================
 ;;; THEOREM APPLICATION
@@ -220,37 +283,70 @@
 
          (when init-subst
            ;; Find all ways to match remaining premises
-           (let ((substs (match-remaining-premises before after env init-subst)))
+           (let ((matches
+                  (match-premises-with-facts
+                   (append before after) env init-subst)))
              (for-each
-              (lambda (subst)
-                ;; Reconstruct matched facts for compatibility check
-                (let ((matched (reconstruct-matched-facts
-                                premises fact trig-idx env subst)))
-                  (when matched
+              (lambda (match-pair)
+                (let* ((subst (car match-pair))
+                       (remaining-facts (cdr match-pair))
+                       (matched (insert-trigger-fact remaining-facts fact trig-idx)))
+                  (when (compatible-ancestors? matched)
                     (let ((results (apply-theorem env thm matched subst)))
-                      (set! new-facts (append results new-facts))))))
-              substs)))))
+                      (set! new-facts
+                            (fold-left (lambda (acc f) (cons f acc))
+                                       new-facts
+                                       results))))))
+              matches)))))
      triggers)
 
     new-facts))
 
-(define (reconstruct-matched-facts premises trigger-fact trig-idx env subst)
-  "Reconstruct the list of matched facts from substitution."
-  (let loop ((i 0) (prems premises) (matched '()))
+(define max-match-results 500)
+
+(define (match-premises-with-facts premises env subst)
+  "Match premises and return ((subst . matched-facts) ...)."
+  (if (null? premises)
+      (list (cons subst '()))
+      (let* ((template (car premises))
+             (key (fact-key template))
+             (candidates (env-lookup env key)))
+        (let loop-candidates ((rest candidates)
+                              (acc '())
+                              (count 0))
+          (cond
+            ((or (null? rest) (>= count max-match-results))
+             acc)
+            (else
+             (let* ((candidate (car rest))
+                    (new-subst (unify-fact template candidate subst)))
+               (if new-subst
+                   (let loop-results
+                       ((results (match-premises-with-facts (cdr premises) env new-subst))
+                        (acc2 acc)
+                        (count2 count))
+                     (cond
+                       ((or (null? results) (>= count2 max-match-results))
+                        (loop-candidates (cdr rest) acc2 count2))
+                       (else
+                        (let ((result (car results)))
+                          (loop-results
+                           (cdr results)
+                           (cons (cons (car result) (cons candidate (cdr result)))
+                                 acc2)
+                           (+ count2 1))))))
+                   (loop-candidates (cdr rest) acc count)))))))))
+
+(define (insert-trigger-fact remaining-facts trigger-fact trig-idx)
+  "Insert trigger fact at trigger index into remaining matched facts."
+  (let loop ((i 0) (rest remaining-facts) (acc '()))
     (cond
-      ((null? prems)
-       (and (compatible-ancestors? (reverse matched))
-            (reverse matched)))
       ((= i trig-idx)
-       (loop (+ i 1) (cdr prems) (cons trigger-fact matched)))
+       (append (reverse acc) (cons trigger-fact rest)))
+      ((null? rest)
+       (append (reverse acc) (list trigger-fact)))
       (else
-       (let* ((prem (car prems))
-              (key (fact-key prem))
-              (candidates (env-lookup env key))
-              (match (find (lambda (f) (unify-fact prem f subst)) candidates)))
-         (if match
-             (loop (+ i 1) (cdr prems) (cons match matched))
-             #f))))))
+       (loop (+ i 1) (cdr rest) (cons (car rest) acc))))))
 
 ;;; ============================================================
 ;;; MAIN SOLVER LOOP
@@ -258,7 +354,8 @@
 
 (define (solve env max-iterations)
   "Run the forward chaining solver."
-  (let loop ((agenda (env-facts env))
+  (let loop ((front (env-facts env))
+             (back '())
              (iter 0))
     (cond
       ;; Goal achieved in all branches
@@ -266,7 +363,7 @@
        (list 'proven iter))
 
       ;; Exhausted all facts
-      ((null? agenda)
+      ((and (null? front) (null? back))
        (list 'exhausted iter))
 
       ;; Iteration limit
@@ -275,9 +372,17 @@
 
       ;; Process next fact
       (else
-       (env-iterations-set! env (+ iter 1))
-       (let ((new-facts (fire-triggered-theorems env (car agenda))))
-         (loop (append (cdr agenda) new-facts) (+ iter 1)))))))
+       (if (null? front)
+           (loop (reverse back) '() iter)
+           (let ((current (car front)))
+             ;; Skip facts in closed branches
+             (if (branch-is-closed? env (fact-dis-ancestors current))
+                 (loop (cdr front) back iter)
+                 (begin
+                   (env-iterations-set! env (+ iter 1))
+                   (let* ((new-facts (fire-triggered-theorems env current))
+                          (next-back (fold-left (lambda (acc f) (cons f acc)) back new-facts)))
+                     (loop (cdr front) next-back (+ iter 1)))))))))))
 
 ;;; ============================================================
 ;;; GOAL CHECKING
@@ -287,27 +392,41 @@
   "Check if the goal is proven in all disjunction branches."
   (let ((disjs (env-disjunctions env))
         (proven (append (env-goal-combos env) (env-closed-branches env))))
-    (if (null? disjs)
-        ;; No disjunctions: just check if goal or contradiction found
-        (not (null? proven))
-        ;; With disjunctions: all branch combinations must be covered
-        (all-branches-covered? disjs proven))))
+    (cond
+      ;; No disjunctions: just check if goal or contradiction found.
+      ((null? disjs)
+       (not (null? proven)))
+      ;; Avoid deep recursion/combinatorial explosion on large branch forests.
+      ((> (length disjs) 16)
+       #f)
+      ;; With manageable disjunction count: check branch coverage with a cap.
+      (else
+       (all-branches-covered? disjs proven 50000)))))
 
-(define (all-branches-covered? disjunctions proven-contexts)
-  "Check if all branch combinations are covered by proven contexts."
-  (let* ((branch-choices
-          (map (lambda (d)
-                 (let ((label (disj-label d))
-                       (n (length (disj-facts d))))
-                   (map (lambda (i) (cons label i))
-                        (iota n))))
-               disjunctions))
-         (all-combos (cartesian-product branch-choices)))
-    (every (lambda (combo)
-             (any (lambda (proven)
-                    (context-covers? proven combo))
-                  proven-contexts))
-           all-combos)))
+(define (all-branches-covered? disjunctions proven-contexts max-combos)
+  "Check if all branch combinations are covered by proven contexts.
+Returns #f if coverage checking itself exceeds max-combos."
+  (let ((choices
+         (map (lambda (d)
+                (let ((label (disj-label d))
+                      (n (length (disj-facts d))))
+                  (map (lambda (i) (cons label i)) (iota n))))
+              disjunctions))
+        (checked 0))
+    (letrec ((search
+              (lambda (remaining combo)
+                (cond
+                  ((> checked max-combos) #f)
+                  ((null? remaining)
+                   (set! checked (+ checked 1))
+                   (any (lambda (proven)
+                          (context-covers? proven combo))
+                        proven-contexts))
+                  (else
+                   (every (lambda (choice)
+                            (search (cdr remaining) (cons choice combo)))
+                          (car remaining)))))))
+      (search choices '()))))
 
 (define (context-covers? ctx combo)
   "Check if a proven context covers a branch combination."
@@ -317,15 +436,6 @@
     (every (lambda (pair)
              (member pair combo))
            (map car ctx-alist))))
-
-(define (cartesian-product lists)
-  "Generate all combinations from lists of choices."
-  (if (null? lists)
-      '(())
-      (let ((rest (cartesian-product (cdr lists))))
-        (append-map (lambda (x)
-                      (map (lambda (r) (cons x r)) rest))
-                    (car lists)))))
 
 ;;; ============================================================
 ;;; SOLVER ENTRY POINT

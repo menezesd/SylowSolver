@@ -350,9 +350,10 @@
 
 (define (take lst n)
   "Take first n elements from a list."
-  (if (or (null? lst) (<= n 0))
-      '()
-      (cons (car lst) (take (cdr lst) (- n 1)))))
+  (let loop ((xs lst) (i n) (acc '()))
+    (if (or (null? xs) (<= i 0))
+        (reverse acc)
+        (loop (cdr xs) (- i 1) (cons (car xs) acc)))))
 
 (define (drop lst n)
   "Drop first n elements from a list."
@@ -392,13 +393,17 @@
 
 (define (append-map f . lsts)
   "Map f over list(s) and append results. Supports multiple lists (SRFI-1 style)."
-  (apply append (apply map f lsts)))
+  (let loop ((remaining (apply map f lsts)) (acc '()))
+    (if (null? remaining)
+        (reverse acc)
+        (let inner ((items (car remaining)) (acc acc))
+          (if (null? items)
+              (loop (cdr remaining) acc)
+              (inner (cdr items) (cons (car items) acc)))))))
 
 (define (fold-right f init lst)
-  "Right fold over a list."
-  (if (null? lst)
-      init
-      (f (car lst) (fold-right f init (cdr lst)))))
+  "Right fold over a list (iterative: reverse then fold-left)."
+  (fold-left (lambda (acc x) (f x acc)) init (reverse lst)))
 
 (define (safe-list-ref lst idx default)
   "Safe list reference with default value."
@@ -407,10 +412,22 @@
       default))
 
 (define (sort lst less?)
-  "Sort a list using insertion sort."
-  (define (insert x sorted)
-    (cond
-      ((null? sorted) (list x))
-      ((less? x (car sorted)) (cons x sorted))
-      (else (cons (car sorted) (insert x (cdr sorted))))))
-  (fold-right insert '() lst))
+  "Sort a list using merge sort (O(n log n))."
+  (define (merge a b)
+    (let loop ((a a) (b b) (acc '()))
+      (cond
+        ((null? a) (append (reverse acc) b))
+        ((null? b) (append (reverse acc) a))
+        ((less? (car a) (car b))
+         (loop (cdr a) b (cons (car a) acc)))
+        (else
+         (loop a (cdr b) (cons (car b) acc))))))
+  (define (merge-sort xs n)
+    (if (<= n 1)
+        xs
+        (let* ((mid (quotient n 2))
+               (left (take xs mid))
+               (right (drop xs mid)))
+          (merge (merge-sort left mid)
+                 (merge-sort right (- n mid))))))
+  (merge-sort lst (length lst)))

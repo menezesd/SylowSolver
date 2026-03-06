@@ -199,18 +199,8 @@
 
 (define (compatible-pair? f1 f2)
   "Check if two facts have compatible disjunction ancestors."
-  (let ((a1 (fact-dis-ancestors f1))
-        (a2 (fact-dis-ancestors f2)))
-    (call/cc
-     (lambda (return)
-       (hash-table-walk
-        a1
-        (lambda (key val)
-          (let ((other (hash-table-ref/default a2 (car key) 'none)))
-            (when (and (not (eq? other 'none))
-                       (not (= other (cdr key))))
-              (return #f)))))
-       #t))))
+  ;; Reuses compatible-ancestors? from unification.scm
+  (compatible-ancestors? (list f1 f2)))
 
 ;;; ============================================================
 ;;; INCREMENTAL MATCHING WITH AMB

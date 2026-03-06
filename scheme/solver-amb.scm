@@ -71,34 +71,16 @@
           (match-remaining-amb (cdr premises) trigger-fact env new-subst
                                (cons candidate matched))))))
 
+;; compatible-with-fact? and all-compatible? use compatible-ancestors?
+;; from unification.scm (loaded before this file)
+
 (define (compatible-with-fact? f1 f2)
   "Check if two facts have compatible disjunction branches."
-  (let ((a1 (fact-dis-ancestors f1))
-        (a2 (fact-dis-ancestors f2)))
-    (call/cc
-     (lambda (return)
-       ;; Check each entry in a1 against a2
-       (hash-table-walk
-        a1
-        (lambda (key _)
-          (let* ((disj-label (car key))
-                 (branch-idx (cdr key))
-                 ;; Look for same disjunction in a2
-                 (found #f))
-            (hash-table-walk
-             a2
-             (lambda (key2 _)
-               (when (equal? (car key2) disj-label)
-                 (set! found #t)
-                 (unless (= (cdr key2) branch-idx)
-                   (return #f)))))))) ; Different branches - incompatible
-       #t))))
+  (compatible-ancestors? (list f1 f2)))
 
 (define (all-compatible? fact facts)
   "Check if fact is compatible with all facts in list."
-  (or (null? facts)
-      (and (compatible-with-fact? fact (car facts))
-           (all-compatible? fact (cdr facts)))))
+  (every (lambda (f) (compatible-with-fact? fact f)) facts))
 
 ;;; ============================================================
 ;;; SOLVER USING AMB
@@ -182,57 +164,6 @@
     ((null? lst) '())
     ((equal? (car lst) item) (cdr lst))
     (else (cons (car lst) (remove-first item (cdr lst))))))
-
-;;; ============================================================
-;;; PROOF SEARCH WITH CONTINUATION-BASED DISJUNCTIONS
-;;; ============================================================
-
-;;; This is an alternative architecture where disjunctions actually
-;;; fork the computation using continuations.
-
-(define (solve-forking initial-facts goal theorems)
-  "Solver that forks at disjunctions using continuations."
-  (let ((all-branches-succeed #t))
-    (call/cc
-     (lambda (done)
-       (let ((branch-fail
-              (lambda ()
-                (set! all-branches-succeed #f)
-                (done 'failed))))
-
-         (define (process-conclusions conclusions env)
-           (for-each
-            (lambda (conc)
-              (case (conclusion-type conc)
-                ((fact)
-                 (let ((f (conclusion-content conc)))
-                   (env-add-fact! env f #t)
-                   (when (fact-matches-goal? f goal)
-                     (done 'proven))
-                   (when (eq? (fact-predicate f) 'false)
-                     (branch-fail))))
-                ((disjunction)
-                 ;; Fork! Try each branch
-                 (let ((branches (disj-facts (conclusion-content conc))))
-                   (fork-branches branches env goal)))))
-            conclusions))
-
-         (define (fork-branches branches env goal)
-           (if (null? branches)
-               (branch-fail)  ; No branches succeeded
-               (call/cc
-                (lambda (try-next)
-                  (let ((branch-env (copy-env env)))
-                    ;; Try this branch
-                    (env-add-fact! branch-env (car branches) #t)
-                    ;; Continue search in this branch
-                    ;; (simplified - would need full search here)
-                    (try-next 'continue))
-                  ;; Try remaining branches
-                  (fork-branches (cdr branches) env goal)))))
-
-         ;; Main search would go here
-         'exhausted)))))
 
 ;;; ============================================================
 ;;; CONVENIENCE WRAPPER

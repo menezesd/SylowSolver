@@ -19,8 +19,15 @@
 ;;; CONVENIENCE FUNCTIONS
 ;;; ============================================================
 
-(define (prove-not-simple group-order)
-  "Prove that a simple group of the given order leads to contradiction."
+(define default-max-iterations 1500)
+
+(define (prove-not-simple group-order . maybe-max-iterations)
+  "Prove that a simple group of the given order leads to contradiction.
+Optional second argument sets max iterations."
+  (let ((max-iterations
+         (if (null? maybe-max-iterations)
+             default-max-iterations
+             (car maybe-max-iterations))))
   (let* ((g (sym 'G))
          (n (num group-order))
          (goal (make-fact 'not_simple (list g)))
@@ -29,10 +36,10 @@
                 (hypothesis 'order (list g n))
                 (hypothesis 'simple (list g)))))
     (call-with-values
-        (lambda () (auto-solve initial-facts goal all-theorems 10000))
+        (lambda () (auto-solve initial-facts goal all-theorems max-iterations))
       (lambda (env result)
         (display-result env result group-order)
-        (values env result)))))
+        (values env result))))))
 
 (define (display-verbose-proof env)
   "Display the full proof with derivation chains like the Haskell version."
@@ -160,26 +167,7 @@
     (newline)
     (newline)))
 
-(define (pretty-theorem-name name)
-  "Pretty-print theorem names."
-  (case name
-    ((hypothesis) "hypothesis")
-    ((sylow) "Sylow's theorem")
-    ((single_sylow_normal) "unique Sylow subgroup is normal")
-    ((not_simple_contradiction) "simple ∧ not_simple → ⊥")
-    ((counting_contradiction) "element counting")
-    ((lagrange) "Lagrange's theorem")
-    ((divides_contradiction) "divisibility contradiction")
-    ((embed_An) "embedding into Aₙ")
-    ((alternating_order) "order of alternating group")
-    ((alternating_simple) "Aₙ is simple (n≥5)")
-    ((subgroup_index) "subgroup index")
-    ((count_order_pk_elements) "counting p^k-order elements")
-    ((more_than_one_sylow) "more than one Sylow subgroup")
-    ((simple_group_action) "simple group action")
-    ((coset_action) "coset action")
-    ((transitive_action) "transitive action")
-    (else (if (symbol? name) (symbol->string name) "unknown"))))
+;;; pretty-theorem-name is defined in proof-tree.scm (loaded before main.scm)
 
 (define (display-proof-summary env meta-map)
   "Display the proof summary at the end."
@@ -250,14 +238,8 @@
 
 (define (context-matches? f-ctx target-ctx)
   "Check if fact context matches target context."
-  (let ((f-alist (hash-table->alist f-ctx))
-        (t-alist (hash-table->alist target-ctx)))
-    (and (= (length f-alist) (length t-alist))
-         (every (lambda (entry)
-                  (let ((key (car entry))
-                        (val (cdr entry)))
-                    (equal? (hash-table-ref/default target-ctx key 'none) val)))
-                f-alist))))
+  ;; Uses ancestors-equal? from solver.scm
+  (ancestors-equal? f-ctx target-ctx))
 
 (define (display-result env result order)
   "Display the solver result."
@@ -308,9 +290,9 @@
   (newline)
   (display "This is the order of A₅, the smallest non-abelian simple group.")
   (newline)
-  (display "The proof explores Sylow subgroup counts.")
+  (display "The solver uses a bounded search (100 iterations) and should report EXHAUSTED/LIMIT, not PROVEN.")
   (newline)
-  (prove-not-simple 60))
+  (prove-not-simple 60 100))
 
 (define (example-order-30)
   "Prove a group of order 30 is not simple."

@@ -111,9 +111,8 @@
 
 (define (context-equal? ctx1 ctx2)
   "Check if two contexts (hash tables) are equal."
-  (let ((a1 (sort-alist (hash-table->alist ctx1)))
-        (a2 (sort-alist (hash-table->alist ctx2))))
-    (equal? a1 a2)))
+  ;; Uses ancestors-equal? from solver.scm (loaded before proof-tree.scm)
+  (ancestors-equal? ctx1 ctx2))
 
 (define (sort-alist alist)
   "Sort an alist for comparison."
@@ -130,10 +129,11 @@
     (for-each (lambda (f)
                 (let* ((ctx (sort-alist (hash-table->alist (fact-dis-ancestors f))))
                        (existing (hash-table-ref/default groups ctx '())))
-                  (hash-table-set! groups ctx (append existing (list f)))))
+                  (hash-table-set! groups ctx (cons f existing))))
               facts)
-    ;; Sort by context size (base case first)
-    (sort (hash-table->alist groups)
+    ;; Reverse each group to restore order, then sort by context size
+    (sort (map (lambda (entry) (cons (car entry) (reverse (cdr entry))))
+               (hash-table->alist groups))
           (lambda (a b) (< (length (car a)) (length (car b)))))))
 
 (define (build-tree meta-map current-case grouped-facts)
@@ -334,19 +334,12 @@
     (append header
             (append-map (lambda (f) (render-fact-clean f)) facts))))
 
+;; render-context-list reuses render-context with a temporary hash table
 (define (render-context-list ctx meta-map)
   "Render a context list (alist) as a string."
-  (string-join
-   (map (lambda (pair)
-          (let* ((disj-id (caar pair))
-                 (idx (cdar pair))
-                 (meta (hash-table-ref/default meta-map disj-id #f)))
-            (if meta
-                (string-append (disj-meta-var-name meta) "="
-                               (safe-list-ref (disj-meta-branch-values meta) idx "?"))
-                (string-append disj-id "." (number->string idx)))))
-        ctx)
-   ", "))
+  (let ((ht (make-hash-table equal?)))
+    (for-each (lambda (pair) (hash-table-set! ht (car pair) (cdr pair))) ctx)
+    (render-context ht meta-map)))
 
 (define (render-fact-clean fact)
   "Render a single fact with clean formatting."
@@ -369,9 +362,10 @@
 (define (pretty-theorem-name name)
   "Pretty-print theorem names."
   (case name
+    ((hypothesis) "hypothesis")
     ((sylow) "Sylow's theorem")
     ((single_sylow_normal) "unique Sylow subgroup is normal")
-    ((not_simple) "simple ∧ not_simple → ⊥")
+    ((not_simple not_simple_contradiction) "simple ∧ not_simple → ⊥")
     ((counting_contradiction) "element counting")
     ((lagrange) "Lagrange's theorem")
     ((divides_contradiction) "divisibility contradiction")
@@ -381,7 +375,9 @@
     ((subgroup_index) "subgroup index")
     ((count_order_pk_elements) "counting p^k-order elements")
     ((more_than_one_sylow) "more than one Sylow subgroup")
-    ((hypothesis) "hypothesis")
+    ((simple_group_action) "simple group action")
+    ((coset_action) "coset action")
+    ((transitive_action) "transitive action")
     (else (if (symbol? name) (symbol->string name) "unknown"))))
 
 ;;; Utility functions are defined in core.scm
