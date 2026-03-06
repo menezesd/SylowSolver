@@ -1,6 +1,8 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
-import Auto (matchFactsToTheorem)
+import Auto (SearchStatus(..), SolverConfig(..), defaultConfig, matchFactsToTheorem, solveWithStatsPure)
 import Data.List (nub)
 import Core
 import qualified Data.HashMap.Strict as HashMap
@@ -8,7 +10,7 @@ import qualified Data.Set as Set
 import Env
 import Unification
 import Generators
-import Predicates (group, pNumSylow) -- For dummy goal
+import Predicates (falseFact, group, order, pNumSylow, simple)
 import NumberTheory
 import Memoization
 import Test.Tasty
@@ -17,6 +19,7 @@ import Test.Tasty.QuickCheck
 import ProofMonad (internSymbolM, runProofM)
 import Data.Hashable (hash)
 import qualified Data.IntMap.Strict as IntMap
+import Theorems (thmList, thmNames)
 
 main :: IO ()
 main = defaultMain tests
@@ -80,6 +83,11 @@ tests =
         [ testProperty "interning is idempotent per name" propInternIdempotent
         , testProperty "interning different names yields different ids" propInternDistinct
         , testProperty "generateSymbolM produces fresh ids" propGenerateSymbolFresh
+        ]
+    , testGroup "Solver Regression"
+        [ testCase "Order 12 reaches contradiction" caseOrder12Contradiction
+        , testCase "Order 30 currently exhausts search without contradiction" caseOrder30Exhausts
+        , testCase "Order 60 is not forced to contradiction in bounded search" caseOrder60NotForced
         ]
     ]
 
@@ -392,3 +400,23 @@ propGenerateSymbolFresh =
         (syms, _) = runProofM (mapM internSymbolM distinct) env0
         ids = map unSymbol syms
      in length distinct == length (nub ids)
+
+solveOrderStatus :: Int -> Int -> SearchStatus
+solveOrderStatus n maxIterations =
+  let facts = [group (sym "G"), order (sym "G") (num n), simple (sym "G")]
+      env0 = initEnv facts thmList thmNames falseFact
+      cfg = defaultConfig {scMaxIterations = maxIterations, scBatchSize = 8}
+      (status, _, _) = solveWithStatsPure cfg env0
+   in status
+
+caseOrder12Contradiction :: Assertion
+caseOrder12Contradiction =
+  solveOrderStatus 12 500 @?= GoalFound
+
+caseOrder30Exhausts :: Assertion
+caseOrder30Exhausts =
+  solveOrderStatus 30 3000 @?= QueueExhausted
+
+caseOrder60NotForced :: Assertion
+caseOrder60NotForced =
+  solveOrderStatus 60 200 @?= QueueExhausted

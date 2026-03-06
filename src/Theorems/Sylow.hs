@@ -13,7 +13,6 @@ module Theorems.Sylow
   ) where
 
 import Core
-import Data.List (foldl')
 import NumberTheory (maxPDivisor)
 import Memoization (numSylowMemo, primeFactorsMemo)
 import Predicates

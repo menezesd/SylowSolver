@@ -16,7 +16,7 @@ import Core (Fact(..), Label(..), DisjId(..), FactId(..), TheoremName, PredName(
 import Environment.Symbols (SymbolTable, symbolTable, ppFactWithSymbols)
 import Environment.Types (ProofEnvironment, FactEntry(..), DisjMeta(..)
                          , feDisAncestors, feConcThm, feDependencies, peDisjMeta, peFacts)
-import Data.List (intercalate, sortOn, foldl')
+import Data.List (intercalate, sortOn)
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 import qualified Data.Map.Strict as Map

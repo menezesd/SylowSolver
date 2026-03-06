@@ -1,8 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 -- | Thread-safe memoization for number theory functions.
 --
@@ -56,8 +54,6 @@ module Memoization
 
 import qualified Data.IntMap.Strict as IntMap
 import Data.IORef
-import Data.Kind (Constraint)
-import GHC.TypeLits (TypeError, ErrorMessage(..))
 import System.IO.Unsafe (unsafePerformIO)
 import NumberTheory
 
@@ -68,15 +64,10 @@ data CacheStats = CacheStats
   , csCacheSize :: !Int
   } deriving (Show, Eq)
 
-type family Memoizable a :: Constraint where
-  Memoizable [Int] = ()
-  Memoizable [(Int, Int)] = ()
-  Memoizable Bool = ()
-  Memoizable other = TypeError
-    ( 'Text "memoizeInt cannot cache values of type: "
-        ':<>: 'ShowType other
-        ':$$: 'Text "Add it to Memoizable or wrap it in a memo-capable type."
-    )
+class Memoizable a
+instance Memoizable [Int]
+instance Memoizable [(Int, Int)]
+instance Memoizable Bool
 
 data MemoStore = MemoStore
   { msDivisors :: IORef (IntMap.IntMap [Int])

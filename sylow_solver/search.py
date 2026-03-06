@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import logging
 from collections import deque
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple, Union, cast
 
 from .config import DEFAULT_CONFIG, OutputMode, SolverConfig
 from .facts import Disjunction, DisjunctionKey, Fact
@@ -38,10 +38,12 @@ class ProofEnvironment:
         self.disj_labels: Dict[DisjunctionKey, str] = {}
         self.goal = goal
         self.goal_achieved = False
-        self.goal_dis_combos: List[Set[Tuple[str, int]]] = []
+        self.goal_dis_combos: List[FrozenSet[Tuple[str, int]]] = []
+        self.goal_dis_combo_set: Set[FrozenSet[Tuple[str, int]]] = set()
         self.fact_labels: Dict[str, Union[Fact, Disjunction]] = {}
         self.disj_meta: Dict[str, DisjMeta] = {}
         self.disj_branch_counts: Dict[str, int] = {}
+        self._combo_cache: Dict[Tuple[Tuple[str, int], ...], Set[FrozenSet[Tuple[str, int]]]] = {}
         self.cur_fact_num = 0
         self.cur_letter = "A"
         self.cur_suffix = 0
@@ -66,10 +68,16 @@ class ProofEnvironment:
         """
         Check if the goal has been achieved across all disjunction branches.
         """
+        if self.goal_achieved:
+            return
         if not self.goal_dis_combos:
             return
-        dis_labels = {D for D, _ in set.union(*(self.goal_dis_combos))}
-        disj_branch_counts = []
+        dis_labels = {label for combo in self.goal_dis_combos for label, _ in combo}
+        if not dis_labels:
+            self.goal_achieved = True
+            return
+
+        disj_branch_counts: List[Tuple[str, int]] = []
         for label in dis_labels:
             count = self.disj_branch_counts.get(label)
             if count is None:
@@ -77,13 +85,16 @@ class ProofEnvironment:
                 count = len(disjunction.facts)
                 self.disj_branch_counts[label] = count
             disj_branch_counts.append((label, count))
+        disj_branch_counts.sort(key=lambda pair: pair[0])
 
-        branch_choices = [[(label, i) for i in range(count)] for label, count in disj_branch_counts]
-        all_combinations = {frozenset(combo) for combo in itertools.product(*branch_choices)}
-
-        frozen_dis_combos = {frozenset(d) for d in self.goal_dis_combos}
+        cache_key = tuple(disj_branch_counts)
+        all_combinations = self._combo_cache.get(cache_key)
+        if all_combinations is None:
+            branch_choices = [[(label, i) for i in range(count)] for label, count in disj_branch_counts]
+            all_combinations = {frozenset(combo) for combo in itertools.product(*branch_choices)}
+            self._combo_cache[cache_key] = all_combinations
         for combination in all_combinations:
-            if not any(proven.issubset(combination) for proven in frozen_dis_combos):
+            if not any(proven.issubset(combination) for proven in self.goal_dis_combo_set):
                 return
 
         self.goal_achieved = True
@@ -121,7 +132,10 @@ class ProofEnvironment:
                         self.symbol_set.add(sym)
 
                 if fact == self.goal:
-                    self.goal_dis_combos.append(fact.dis_ancestors)
+                    combo = frozenset(fact.dis_ancestors)
+                    if combo not in self.goal_dis_combo_set:
+                        self.goal_dis_combo_set.add(combo)
+                        self.goal_dis_combos.append(combo)
                     self.update_goal_achieved(fact)
                     self.update_useful(fact)
 
@@ -156,30 +170,13 @@ class ProofEnvironment:
             return None
 
         matching = Substitution.empty()
-        for in_fact, thm_fact, compiled in zip(facts, thm.facts, thm.compiled_patterns):
-            if in_fact.name != thm_fact.name:
+        for in_fact, thm_fact in zip(facts, thm.facts):
+            if not _unify_facts(thm_fact, in_fact, matching):
                 return None
-            if len(in_fact.args) != len(thm_fact.args):
-                return None
-
-            for in_arg, (kind, value) in zip(in_fact.args, compiled):
-                if kind == "star":
-                    if in_arg != value:
-                        return None
-                    continue
-
-                if value in matching:
-                    if matching[value] != in_arg:
-                        return None
-                else:
-                    matching.insert(value, in_arg)
 
         conclusions = []
         for conc in thm.conclusions:
-            new_fact_args = [
-                arg if isinstance(arg, str) and arg.startswith("?") else matching[arg]
-                for arg in conc.args
-            ]
+            new_fact_args = [_substitute_arg(arg, matching) for arg in conc.args]
             conclusions.append(Fact(conc.name, new_fact_args))
 
         return conclusions
@@ -409,28 +406,8 @@ def match_facts_to_template(
     dicts: List[Substitution] = []
 
     for fact in facts:
-        if fact.name != template.name:
-            continue
-        if len(fact.args) != len(template.args):
-            continue
-
         match_dict = init_match_dict.copy()
-        is_match = True
-
-        for temp_arg, fact_arg in zip(template.args, fact.args):
-            if isinstance(temp_arg, str) and temp_arg.startswith("*"):
-                if temp_arg[1:] != fact_arg:
-                    is_match = False
-                    break
-                continue
-
-            if temp_arg not in match_dict:
-                match_dict.insert(temp_arg, fact_arg)
-            elif match_dict[temp_arg] != fact_arg:
-                is_match = False
-                break
-
-        if is_match:
+        if _unify_facts(template, fact, match_dict):
             matches.append(fact)
             dicts.append(match_dict)
 
@@ -560,6 +537,15 @@ def _match_with_trigger(
             complete_matches.append(before_match + [new_fact] + after_match)
 
     return complete_matches
+
+
+def _substitute_arg(arg: Any, substitution: Substitution) -> Any:
+    """Apply a theorem substitution to one argument."""
+    if isinstance(arg, str) and arg.startswith("?"):
+        return arg
+    if isinstance(arg, str) and arg in substitution:
+        return substitution[arg]
+    return arg
 
 
 def _unify_facts(template: Fact, fact: Fact, substitution: Substitution) -> bool:

@@ -19,33 +19,53 @@ main = do
     Right (cfg, orders) ->
       case orders of
         [] -> interactiveLoop cfg
-        os -> mapM_ (runOrder cfg) os
+        os -> do
+          results <- mapM (runOrder cfg) os
+          let validResults = [r | Just r <- results]
+              invalidCount = length [() | Nothing <- results]
+              successCount = length (filter id validResults)
+              failCount = length validResults - successCount
+          putStrLn ""
+          putStrLn $ "Summary: processed=" ++ show (length validResults)
+            ++ ", success=" ++ show successCount
+            ++ ", failure=" ++ show failCount
+            ++ ", invalid=" ++ show invalidCount
   where
     interactiveLoop cfg = do
-      putStr "Enter a group order (blank to quit): "
+      putStr "Enter a positive group order (blank to quit): "
       hFlush stdout
       line <- getLine
       if null line
         then pure ()
         else do
-          runOrder cfg line
+          _ <- runOrder cfg line
           interactiveLoop cfg
 
     runOrder cfg line =
-      case readMaybe line :: Maybe Int of
-        Just n -> do
+      case parsePositiveOrder line of
+        Right n -> do
           let initialFacts = [group (sym "G"), order (sym "G") (num n), simple (sym "G")]
               goal = falseFact
               env = initEnv initialFacts thmList thmNames goal
-          _ <- autoSolveWith cfg env
-          pure ()
-        Nothing -> do
-          putStrLn $ "Invalid order (not an integer): " ++ line
+          success <- autoSolveWith cfg env
+          pure (Just success)
+        Left err -> do
+          putStrLn $ "Invalid order: " ++ line ++ " (" ++ err ++ ")"
+          pure Nothing
+
+    parsePositiveOrder :: String -> Either String Int
+    parsePositiveOrder raw =
+      case readMaybe raw :: Maybe Int of
+        Nothing -> Left "not an integer"
+        Just n
+          | n <= 0 -> Left "must be positive"
+          | otherwise -> Right n
 
     parseArgs :: [String] -> Either String (SolverConfig, [String])
     parseArgs = go defaultConfig []
       where
         go cfg acc [] = Right (cfg, reverse acc)
+        go _ _ ("--help" : _) = Left usageText
         go cfg acc ("--max-iterations" : n : rest) =
           case readMaybe n of
             Just i -> go cfg { scMaxIterations = i } acc rest
@@ -64,3 +84,11 @@ main = do
         go cfg acc (arg : rest)
           | Just (_ :: Int) <- readMaybe arg = go cfg (arg : acc) rest
           | otherwise = Left $ "Unrecognized argument: " ++ arg
+
+    usageText =
+      unlines
+        [ "Usage: sylow-solver [--order N | N] [--max-iterations K] [--batch-size K] [--verbose]"
+        , "       Output modes: --clean (default), --classic, --tree"
+        , "       Orders must be positive integers."
+        , "Note: a simple group of order 60 exists (A5), so contradiction is not expected in general for |G|=60."
+        ]

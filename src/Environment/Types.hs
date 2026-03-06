@@ -222,8 +222,8 @@ data GoalState = GoalState
   { gsGoal :: !Fact                         -- ^ The fact to prove
   , gsAchieved :: !Bool                     -- ^ Whether the goal has been proven
   , gsDisCombos :: ![Set (DisjId, Int)]     -- ^ Observed branch combinations
-  , gsCachedDisjSizes :: !(IntMap Int)      -- ^ Cached disjunction sizes
-  , gsCachedCombos :: ![Set (DisjId, Int)]  -- ^ Cached required combinations
+  , gsCachedDisjSizes :: !(Map DisjId Int)  -- ^ Cached disjunction sizes
+  , gsCachedCombos :: !(Set (Set (DisjId, Int))) -- ^ Cached required combinations
   } deriving stock (Show)
 
 -- | State for generating unique IDs and managing symbols.
@@ -383,11 +383,11 @@ peGoalDisCombos :: ProofEnvironment -> [Set (DisjId, Int)]
 peGoalDisCombos = gsDisCombos . peGoalState
 
 {-# INLINE peGoalCachedDisjSizes #-}
-peGoalCachedDisjSizes :: ProofEnvironment -> IntMap Int
+peGoalCachedDisjSizes :: ProofEnvironment -> Map DisjId Int
 peGoalCachedDisjSizes = gsCachedDisjSizes . peGoalState
 
 {-# INLINE peGoalCachedCombos #-}
-peGoalCachedCombos :: ProofEnvironment -> [Set (DisjId, Int)]
+peGoalCachedCombos :: ProofEnvironment -> Set (Set (DisjId, Int))
 peGoalCachedCombos = gsCachedCombos . peGoalState
 
 -- GeneratorState accessors

@@ -30,7 +30,6 @@ module IncrementalMatching
 
 import Core
 import Data.Foldable (toList)
-import Data.List (foldl')
 import Data.Hashable (hash)
 import Data.IntMap.Strict (IntMap)
 import Data.Sequence (Seq, (|>))

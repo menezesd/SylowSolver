@@ -20,11 +20,9 @@ from sylow_solver.theorems import (
 )
 
 
-def build_environment(
-    order_value: str, config: SolverConfig, logger: logging.Logger
-) -> ProofEnvironment:
+def build_environment(order_value: int, config: SolverConfig, logger: logging.Logger) -> ProofEnvironment:
     """Create a proof environment for a group of given order."""
-    facts: List[Fact] = [group("G"), simple("G"), order("G", order_value)]
+    facts: List[Fact] = [group("G"), simple("G"), order("G", str(order_value))]
     return ProofEnvironment(
         list(facts),
         DEFAULT_THEOREMS,
@@ -35,16 +33,43 @@ def build_environment(
     )
 
 
+def _parse_positive_order(raw: str) -> int | None:
+    """Parse and validate a positive integer order."""
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
 def solve_orders(orders: Iterable[str], config: SolverConfig, logger: logging.Logger) -> List[bool]:
     """Run the solver for each provided order and return success flags."""
     results: List[bool] = []
-    for order_value in orders:
+    processed = 0
+    invalid = 0
+    for raw_order in orders:
+        order_value = _parse_positive_order(raw_order)
+        if order_value is None:
+            invalid += 1
+            results.append(False)
+            print(f"order {raw_order}: INVALID (must be a positive integer)")
+            continue
+
+        processed += 1
         env = build_environment(order_value, config, logger)
         logger.info("Starting proof search for |G| = %s", order_value)
         success = auto_solve(env)
         results.append(success)
         status = "SUCCESS" if success else "FAILURE"
         print(f"order {order_value}: {status}")
+    if processed + invalid > 1:
+        proved = sum(1 for result in results if result)
+        print(
+            f"summary: processed={processed}, proved={proved}, "
+            f"failed={processed - proved}, invalid={invalid}"
+        )
     return results
 
 

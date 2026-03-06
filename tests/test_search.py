@@ -138,6 +138,30 @@ def test_complex_disjunction():
     assert auto_solve(pf_envir), "Should prove X is subgroup of F through disjunction cases"
 
 
+def test_goal_not_achieved_if_only_some_disjunction_branches_prove():
+    def sub(A, B):
+        return Fact("subgroup", [A, B])
+
+    premises = [Fact("subgroup", ["A", "B"]), Fact("subgroup", ["B", "C"])]
+    conclusions = [Fact("subgroup", ["A", "C"])]
+    subgroup_trans = Theorem(premises, conclusions, "subgroup_trans")
+
+    facts = [
+        Disjunction([sub("A", "B"), sub("A", "X")]),
+        sub("B", "D"),
+    ]
+    goal = sub("A", "D")
+
+    pf_envir = ProofEnvironment(
+        facts,
+        [subgroup_trans],
+        {"subgroup_trans": subgroup_trans},
+        goal,
+        config=CONFIG,
+    )
+    assert not auto_solve(pf_envir), "Should fail because branch A->X has no path to D"
+
+
 def test_alternating_embedding():
     facts = [
         group("G"),
@@ -177,3 +201,44 @@ def test_element_counting():
         config=CONFIG,
     )
     assert auto_solve(pf_envir), "Should find contradiction by counting elements"
+
+
+def test_order_12_not_simple_regression():
+    facts = [group("G"), simple("G"), order("G", "12")]
+    goal = false()
+    pf_envir = ProofEnvironment(
+        facts,
+        DEFAULT_THEOREMS,
+        DEFAULT_THEOREM_DICT,
+        goal,
+        config=SolverConfig(max_iterations=250, batch_size=8, verbose=False),
+    )
+    assert auto_solve(pf_envir), "Order 12 should derive contradiction under simple-group assumption"
+
+
+def test_order_30_not_simple_regression():
+    facts = [group("G"), simple("G"), order("G", "30")]
+    goal = false()
+    pf_envir = ProofEnvironment(
+        facts,
+        DEFAULT_THEOREMS,
+        DEFAULT_THEOREM_DICT,
+        goal,
+        config=SolverConfig(max_iterations=350, batch_size=8, verbose=False),
+    )
+    assert auto_solve(pf_envir), "Order 30 should derive contradiction under simple-group assumption"
+
+
+def test_order_60_does_not_force_contradiction_regression():
+    facts = [group("G"), simple("G"), order("G", "60")]
+    goal = false()
+    pf_envir = ProofEnvironment(
+        facts,
+        DEFAULT_THEOREMS,
+        DEFAULT_THEOREM_DICT,
+        goal,
+        config=SolverConfig(max_iterations=40, batch_size=8, verbose=False),
+    )
+    assert not auto_solve(
+        pf_envir
+    ), "Order 60 has a simple example (A5), so solver must not force contradiction"

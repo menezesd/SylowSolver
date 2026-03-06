@@ -28,8 +28,8 @@ initEnv facts theorems thmDict goal =
         { gsGoal = goal
         , gsAchieved = False
         , gsDisCombos = []
-        , gsCachedDisjSizes = IntMap.empty
-        , gsCachedCombos = []
+        , gsCachedDisjSizes = Map.empty
+        , gsCachedCombos = mempty
         }
       baseGenState = GeneratorState
         { gsCurFactNum = 0

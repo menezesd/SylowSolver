@@ -3,6 +3,7 @@ import string
 
 from sylow_solver.facts import Fact
 from sylow_solver.search import _unify_facts, match_facts_to_template
+from sylow_solver.substitution import Substitution
 
 
 def _random_symbol(length: int = 3) -> str:
@@ -24,9 +25,9 @@ def test_unify_respects_reused_variables():
             fact_args.append(assignments[var])
         fact = Fact("foo", fact_args)
 
-        subst = {}
+        subst = Substitution.empty()
         assert _unify_facts(template, fact, subst)
-        assert subst == assignments
+        assert dict(subst.items()) == assignments
 
 
 def test_unify_exact_match_guard():
@@ -34,8 +35,8 @@ def test_unify_exact_match_guard():
     matching_fact = Fact("bar", ["A", "B"])
     failing_fact = Fact("bar", ["C", "B"])
 
-    assert _unify_facts(template, matching_fact, {}) is True
-    assert _unify_facts(template, failing_fact, {}) is False
+    assert _unify_facts(template, matching_fact, Substitution.empty()) is True
+    assert _unify_facts(template, failing_fact, Substitution.empty()) is False
 
 
 def test_match_facts_to_template_includes_all_matches():
