@@ -249,34 +249,54 @@
                                          (list p-arg g-arg (num count))))))
            '())))))
 
-;;; Counting contradiction: if sum of element counts > |G|, contradiction
+;;; Counting contradiction: sum ALL element bounds for a group.
+;;; When a new order_pk_lower_bound is derived, look up all compatible
+;;; bounds from the environment and check if total > |G|.
 (define thm-counting-contradiction
   (make-hyper-theorem
    'counting_contradiction
-   (list (make-fact 'group (list (var "G")))
-         (make-fact 'order (list (var "G") (var "n")))
-         (make-fact 'order_pk_lower_bound (list (var "p") (var "G") (var "cp")))
-         (make-fact 'order_pk_lower_bound (list (var "q") (var "G") (var "cq"))))
+   (list (make-fact 'order (list (var "G") (var "n")))
+         (make-fact 'order_pk_lower_bound (list (var "p") (var "G") (var "cp"))))
    (lambda (facts subst env)
      (let ((n-arg (subst-ref subst "n"))
-           (p-arg (subst-ref subst "p"))
-           (q-arg (subst-ref subst "q"))
-           (cp-arg (subst-ref subst "cp"))
-           (cq-arg (subst-ref subst "cq")))
-       (if (and (numeric-arg? n-arg)
-                (numeric-arg? p-arg)
-                (numeric-arg? q-arg)
-                (numeric-arg? cp-arg)
-                (numeric-arg? cq-arg)
-                (not (= (arg-value p-arg) (arg-value q-arg))))
-           (let ((n (arg-value n-arg))
-                 (cp (arg-value cp-arg))
-                 (cq (arg-value cq-arg)))
-             ;; +1 for identity element
-             (if (> (+ cp cq 1) n)
-                 (list (conc-fact (make-fact 'false '())))
-                 '()))
-           '())))))
+           (g-arg (subst-ref subst "G"))
+           (trigger-fact (cadr facts)))
+       (if (not (numeric-arg? n-arg))
+           '()
+           (let* ((n (arg-value n-arg))
+                  (trigger-ancestors (fact-dis-ancestors trigger-fact))
+                  ;; Look up all order_pk_lower_bound facts for this group
+                  (all-bounds (env-lookup env (cons 'order_pk_lower_bound 3)))
+                  ;; Filter: same group, numeric, compatible ancestors
+                  (compatible-bounds
+                   (filter
+                    (lambda (f)
+                      (let ((args (fact-args f)))
+                        (and (= (length args) 3)
+                             (arg-equal? (cadr args) g-arg)
+                             (numeric-arg? (car args))
+                             (numeric-arg? (caddr args))
+                             (compatible-ancestors? (list trigger-fact f)))))
+                    all-bounds))
+                  ;; Deduplicate by prime: keep highest bound per prime
+                  (best-by-prime (make-hash-table eqv?)))
+             ;; Build best bound per prime
+             (for-each
+              (lambda (f)
+                (let* ((p (arg-value (car (fact-args f))))
+                       (c (arg-value (caddr (fact-args f))))
+                       (existing (hash-table-ref/default best-by-prime p 0)))
+                  (when (> c existing)
+                    (hash-table-set! best-by-prime p c))))
+              compatible-bounds)
+             ;; Sum all bounds + 1 for identity
+             (let ((total (+ 1 (hash-table-fold best-by-prime
+                                                 (lambda (k v acc) (+ v acc))
+                                                 0))))
+               (if (and (> (hash-table-size best-by-prime) 1)
+                        (> total n))
+                   (list (conc-fact (make-fact 'false '())))
+                   '()))))))))
 
 ;;; ============================================================
 ;;; EMBEDDING IN ALTERNATING GROUPS
