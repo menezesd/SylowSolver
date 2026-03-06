@@ -45,15 +45,6 @@ class Fact:
     def __hash__(self) -> int:
         return hash((self.name, tuple(self.args)))
 
-    # Legacy helpers kept for compatibility
-    def do_print(self) -> None:
-        print(self)
-
-    def do_nice_print(self) -> None:
-        self.print_nice()
-
-    def equals(self, fact: "Fact") -> bool:
-        return self == fact
 
 
 @dataclass(frozen=True)
@@ -101,17 +92,10 @@ class Disjunction:
     def get_key(self) -> DisjunctionKey:
         return DisjunctionKey.from_disjunction(self.facts, self.dis_ancestors, self.conc_thm)
 
-    def do_print(self) -> None:
+    def print_nice(self) -> None:
         print(self.label, ":")
         for i, fact in enumerate(self.facts):
-            fact.do_print()
-            if i != len(self.facts) - 1:
-                print("    OR")
-
-    def do_nice_print(self) -> None:
-        print(self.label, ":")
-        for i, fact in enumerate(self.facts):
-            fact.do_print()
+            print(fact)
             if i != len(self.facts) - 1:
                 print("    OR")
         if self.conc_thm is not None:

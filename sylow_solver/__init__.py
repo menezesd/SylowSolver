@@ -1,6 +1,6 @@
 from .config import DEFAULT_CONFIG, SolverConfig
 from .facts import Disjunction, DisjunctionKey, Fact
-from .search import Proof_environment, ProofEnvironment, auto_solve, match_facts_to_theorem
+from .search import ProofEnvironment, auto_solve, match_facts_to_theorem
 from .theorem_base import HyperTheorem, Theorem
 from .theorems import (
     DEFAULT_THEOREM_DICT,
@@ -28,7 +28,6 @@ __all__ = [
     "DisjunctionKey",
     "Fact",
     "ProofEnvironment",
-    "Proof_environment",
     "auto_solve",
     "match_facts_to_theorem",
     "HyperTheorem",

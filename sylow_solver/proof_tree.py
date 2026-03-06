@@ -310,15 +310,10 @@ def render_clean(
 
 def _group_by_case_context(facts: List["Fact"]) -> List[Tuple[frozenset, List["Fact"]]]:
     """Group facts by their case context, sorted by context size."""
-    contexts: Set[frozenset] = set()
+    grouped: Dict[frozenset, List["Fact"]] = {}
     for f in facts:
-        contexts.add(frozenset(f.dis_ancestors))
-
-    sorted_contexts = sorted(contexts, key=len)
-
-    return [
-        (ctx, [f for f in facts if frozenset(f.dis_ancestors) == ctx]) for ctx in sorted_contexts
-    ]
+        grouped.setdefault(frozenset(f.dis_ancestors), []).append(f)
+    return sorted(grouped.items(), key=lambda x: len(x[0]))
 
 
 def _render_case_group(

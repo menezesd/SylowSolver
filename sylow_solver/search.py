@@ -44,6 +44,7 @@ class ProofEnvironment:
         self.disj_meta: Dict[str, DisjMeta] = {}
         self.disj_branch_counts: Dict[str, int] = {}
         self._combo_cache: Dict[Tuple[Tuple[str, int], ...], Set[FrozenSet[Tuple[str, int]]]] = {}
+        self._seen_facts: Set[Tuple[str, Tuple[Any, ...], FrozenSet[Tuple[str, int]]]] = set()
         self.cur_fact_num = 0
         self.cur_letter = "A"
         self.cur_suffix = 0
@@ -124,6 +125,10 @@ class ProofEnvironment:
         """Add new facts or disjunctions to the proof environment."""
         for fact in new_facts:
             if isinstance(fact, Fact):
+                dedup_key = (fact.name, tuple(fact.args), frozenset(fact.dis_ancestors))
+                if dedup_key in self._seen_facts:
+                    continue
+                self._seen_facts.add(dedup_key)
                 new_label = self.new_label()
                 self.fact_labels[new_label] = fact
                 fact.label = new_label
@@ -272,7 +277,7 @@ class ProofEnvironment:
         for fact_lbl in self.ordered_fact_list:
             fact = self.fact_labels[fact_lbl]
             if isinstance(fact, Fact) and fact.useful:
-                fact.do_nice_print()
+                fact.print_nice()
 
     def render_proof(self) -> List[str]:
         """Render proof based on configured output mode."""
@@ -292,7 +297,7 @@ class ProofEnvironment:
     def print_facts(self) -> None:
         for lbl in self.fact_labels:
             fact = self.fact_labels[lbl]
-            fact.do_print()
+            print(fact)
             print()
 
     def _cmd_apply(self, args: List[str]) -> None:
@@ -543,9 +548,7 @@ def _match_with_trigger(
 
 def _substitute_arg(arg: Any, substitution: Substitution) -> Any:
     """Apply a theorem substitution to one argument."""
-    if isinstance(arg, str) and arg.startswith("?"):
-        return arg
-    if isinstance(arg, str) and arg in substitution:
+    if isinstance(arg, str) and not arg.startswith("?") and arg in substitution:
         return substitution[arg]
     return arg
 
@@ -571,6 +574,3 @@ def _unify_facts(template: Fact, fact: Fact, substitution: Substitution) -> bool
 
     return True
 
-
-# Keep compatibility with the original name
-Proof_environment = ProofEnvironment

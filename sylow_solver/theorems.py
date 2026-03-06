@@ -3,8 +3,7 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Union
 
-import sylow2
-
+from . import number_theory
 from .facts import Disjunction, Fact
 from .predicates import Predicates
 from .theorem_base import HyperTheorem, Theorem
@@ -114,12 +113,12 @@ def _sylow_rule(facts: List[Fact]) -> List[Union[Fact, Disjunction]]:
     conclusions: List[Union[Fact, Disjunction]] = []
     group_name = facts[0].args[0]
     group_order = int(facts[1].args[1])
-    for p in sylow2.prime_factors(group_order):
-        sylow_order = p ** sylow2.max_p_divisor(group_order, p)
+    for p in number_theory.prime_factors(group_order):
+        sylow_order = p ** number_theory.max_p_divisor(group_order, p)
         conclusions.append(sylow_p_order(group_name, str(p), str(sylow_order)))
         conclusions.append(sylow_p_subgroup("?" + str(p), str(p), group_name))
         conclusions.append(order("?" + str(p), str(sylow_order)))
-        n_p_list = sylow2.num_sylow(p, group_order)
+        n_p_list = number_theory.num_sylow(p, group_order)
         dis_facts = []
         for n_p in n_p_list:
             dis_facts.append(Fact(Predicates.NUM_SYLOW.value, [str(p), group_name, str(n_p)]))
@@ -276,7 +275,7 @@ def _simple_group_action_rule(facts: List[Fact]) -> List[Fact]:
     return conclusions
 
 
-simple_group_action = HyperTheorem(in_facts, _simple_group_action_rule, "subgroup_index")
+simple_group_action = HyperTheorem(in_facts, _simple_group_action_rule, "simple_group_action")
 
 # counting elements of order p^k
 in_facts = [
@@ -289,7 +288,6 @@ in_facts = [
 def _count_order_pk_elements_rule(facts: List[Fact]) -> List[Fact]:
     G = facts[0].args[2]
     p = int(facts[0].args[1])
-    facts[0].args[0]
     n_p = int(facts[1].args[2])
     if (pk := int(facts[2].args[1])) == p:
         lower_bound = (p - 1) * n_p
@@ -409,7 +407,7 @@ def _normalizer_sylow_intersection_rule(
         conclusions.append(normalizer_of_sylow_intersection(str(p), G, "?T"))
 
         possible_order_facts = []
-        for d in sylow2.divisors(n):
+        for d in number_theory.divisors(n):
             if (d % pk == 0) and (d > pk):
                 possible_order_facts.append(order("?T", str(d)))
 
@@ -437,7 +435,6 @@ def _normal_subgroup_to_not_simple_rule(facts: List[Fact]) -> List[Fact]:
     h = int(facts[1].args[1])
     g = int(facts[2].args[1])
     G = facts[0].args[1]
-    facts[0].args[0]
     if 1 < h and h < g:
         conclusions.append(not_simple(G))
     return conclusions
@@ -457,7 +454,6 @@ in_facts = [
 
 def _rule_out_max_intersections_rule(facts: List[Fact]) -> List[Fact]:
     conclusions: List[Fact] = []
-    int(facts[0].args[0])
     np = int(facts[0].args[2])
     pl = int(facts[1].args[2])
     pk = int(facts[2].args[2])
@@ -478,10 +474,9 @@ def _rule_out_normalizer_of_intersection_order_rule(
 ) -> List[Fact]:
     conclusions: List[Fact] = []
     p = int(facts[0].args[0])
-    facts[0].args[2]
     k = int(facts[1].args[1])
 
-    n_p_list = sylow2.num_sylow(p, k)
+    n_p_list = number_theory.num_sylow(p, k)
     if len(n_p_list) == 1:
         conclusions.append(false())
     return conclusions
