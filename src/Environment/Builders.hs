@@ -52,9 +52,8 @@ buildDisjunction nc facts = do
       deHash = HashKey (hash deFacts)
       disj = DisjunctionEntry {..}
       subConcs =
-        [ NewConclusion (CFact f) [LDisj disjLabel] (Set.singleton (disjLabel, i)) (ncConcThm nc)
-        | (i, f) <- zip [0..] deFacts
-        , let disjLabel = deLabel
+        [ NewConclusion (CFact f) [] (ncDisAncestors nc) (ncConcThm nc)
+        | f <- deFacts
         ]
   pure (BuiltDisjunction disj subConcs)
 

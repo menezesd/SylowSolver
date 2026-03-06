@@ -54,6 +54,7 @@ tests =
     , testGroup "Disjunction Coverage"
         [ testCase "Disjunction coverage detects goal proven" caseDisjunctionCoverage
         , testCase "Disjunction coverage detects missing branch" caseDisjunctionMissing
+        , testCase "Nested disjunction preserves parent ancestors" caseNestedDisjunctionAncestors
         ]
     , testGroup "FactDatabase Invariants"
         [ testProperty "fdFactIndex keys match fact keys" propFactIndexKeysMatch
@@ -86,7 +87,7 @@ tests =
         ]
     , testGroup "Solver Regression"
         [ testCase "Order 12 reaches contradiction" caseOrder12Contradiction
-        , testCase "Order 30 currently exhausts search without contradiction" caseOrder30Exhausts
+        , testCase "Order 30 reaches contradiction" caseOrder30Contradiction
         , testCase "Order 60 is not forced to contradiction in bounded search" caseOrder60NotForced
         ]
     ]
@@ -167,6 +168,31 @@ caseDisjunctionMissing = do
       env2 = updateGoalState (\gs -> gs { gsDisCombos = combos }) env1
       env3 = updateGoalAchieved env2
   peGoalAchieved env3 @?= False
+
+caseNestedDisjunctionAncestors :: Assertion
+caseNestedDisjunctionAncestors = do
+  let goal = Fact (customPred "goal") []
+      env0 = initEnv [] [] HashMap.empty goal
+      disjA = Disjunction [Fact (customPred "u") [], Fact (customPred "v") []]
+      (env1, _) = addNewFacts env0 [NewConclusion (CDisj disjA) [] Set.empty Nothing]
+      d1Label = case peDisjunctions env1 of
+        (d : _) -> deLabel d
+        [] -> DisjId 0
+      parentAnc = Set.singleton (d1Label, 1)
+      disjB = Disjunction [Fact (customPred "p") [], Fact (customPred "q") []]
+      (env2, inserted) = addNewFacts env1 [NewConclusion (CDisj disjB) [] parentAnc Nothing]
+      d2Label = case peDisjunctions env2 of
+        (d : _) -> deLabel d
+        [] -> DisjId 0
+      lookupAnc name =
+        [ feDisAncestors fe
+        | fe <- inserted
+        , factName (feFact fe) == customPred name
+        ]
+      ancP = lookupAnc "p"
+      ancQ = lookupAnc "q"
+  ancP @?= [Set.fromList [(d1Label, 1), (d2Label, 0)]]
+  ancQ @?= [Set.fromList [(d1Label, 1), (d2Label, 1)]]
 
 -- Unification property tests
 propUnifyIdempotent :: String -> Bool
@@ -413,9 +439,9 @@ caseOrder12Contradiction :: Assertion
 caseOrder12Contradiction =
   solveOrderStatus 12 500 @?= GoalFound
 
-caseOrder30Exhausts :: Assertion
-caseOrder30Exhausts =
-  solveOrderStatus 30 3000 @?= QueueExhausted
+caseOrder30Contradiction :: Assertion
+caseOrder30Contradiction =
+  solveOrderStatus 30 3000 @?= GoalFound
 
 caseOrder60NotForced :: Assertion
 caseOrder60NotForced =
