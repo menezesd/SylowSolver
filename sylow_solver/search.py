@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import logging
 from collections import deque
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple, Union, cast
@@ -32,6 +31,7 @@ class ProofEnvironment:
         self.ordered_fact_list: List[str] = []  # fact labels in order of appearance
         self.facts: List[Fact] = []
         self.facts_by_key: Dict[Tuple[str, int], List[Fact]] = {}
+        self.facts_by_key_val: Dict[Tuple[str, int, Any], List[Fact]] = {}
         self.theorems = theorems
         self.theorem_name_dict = theorem_name_dict
         self.disjunctions: List[Disjunction] = []
@@ -43,7 +43,6 @@ class ProofEnvironment:
         self.fact_labels: Dict[str, Union[Fact, Disjunction]] = {}
         self.disj_meta: Dict[str, DisjMeta] = {}
         self.disj_branch_counts: Dict[str, int] = {}
-        self._combo_cache: Dict[Tuple[Tuple[str, int], ...], Set[FrozenSet[Tuple[str, int]]]] = {}
         self._seen_facts: Set[Tuple[str, Tuple[Any, ...], FrozenSet[Tuple[str, int]]]] = set()
         self.cur_fact_num = 0
         self.cur_letter = "A"
@@ -68,6 +67,9 @@ class ProofEnvironment:
     def update_goal_achieved(self, goal_fact: Fact) -> None:
         """
         Check if the goal has been achieved across all disjunction branches.
+
+        Uses recursive coverage checking instead of enumerating all combinations,
+        which avoids exponential blowup with many disjunctions.
         """
         if self.goal_achieved:
             return
@@ -78,29 +80,41 @@ class ProofEnvironment:
             self.goal_achieved = True
             return
 
-        disj_branch_counts: List[Tuple[str, int]] = []
-        for label in dis_labels:
+        # Collect (label, branch_count) for all relevant disjunctions
+        disj_info: List[Tuple[str, int]] = []
+        for label in sorted(dis_labels):
             count = self.disj_branch_counts.get(label)
             if count is None:
                 disjunction = cast(Disjunction, self.fact_labels[label])
                 count = len(disjunction.facts)
                 self.disj_branch_counts[label] = count
-            disj_branch_counts.append((label, count))
-        disj_branch_counts.sort(key=lambda pair: pair[0])
+            disj_info.append((label, count))
 
-        cache_key = tuple(disj_branch_counts)
-        all_combinations = self._combo_cache.get(cache_key)
-        if all_combinations is None:
-            branch_choices = [
-                [(label, i) for i in range(count)] for label, count in disj_branch_counts
-            ]
-            all_combinations = {frozenset(combo) for combo in itertools.product(*branch_choices)}
-            self._combo_cache[cache_key] = all_combinations
-        for combination in all_combinations:
-            if not any(proven.issubset(combination) for proven in self.goal_dis_combo_set):
-                return
+        # Check coverage recursively: every combination of branches must be
+        # covered by some proven combo
+        if self._check_coverage(disj_info, 0, frozenset()):
+            self.goal_achieved = True
 
-        self.goal_achieved = True
+    def _check_coverage(
+        self,
+        disj_info: List[Tuple[str, int]],
+        idx: int,
+        current: FrozenSet[Tuple[str, int]],
+    ) -> bool:
+        """Recursively check that all branch combinations are covered."""
+        # First check if current partial assignment is already covered
+        if any(proven.issubset(current) for proven in self.goal_dis_combo_set):
+            return True
+        # If we've assigned all disjunctions and no proven combo covers us, fail
+        if idx >= len(disj_info):
+            return False
+        label, count = disj_info[idx]
+        for branch in range(count):
+            if not self._check_coverage(
+                disj_info, idx + 1, current | {(label, branch)}
+            ):
+                return False
+        return True
 
     def update_useful(self, fact: Fact) -> None:
         """Mark a given fact, and all of its ancestors, as useful."""
@@ -170,6 +184,10 @@ class ProofEnvironment:
     def _index_fact(self, fact: Fact) -> None:
         key = (fact.name, len(fact.args))
         self.facts_by_key.setdefault(key, []).append(fact)
+        # Also index by (name, arity, first_arg) for faster lookups
+        if fact.args:
+            val_key = (fact.name, len(fact.args), fact.args[0])
+            self.facts_by_key_val.setdefault(val_key, []).append(fact)
 
     def apply_std_thm(self, thm: Theorem, facts: List[Fact]) -> Optional[List[Fact]]:
         """Apply a standard theorem to a list of facts."""
@@ -483,6 +501,10 @@ def auto_solve(pf_envir: ProofEnvironment) -> bool:
             continue
 
         for fact in batch:
+            # Skip if this fact's branch was closed during this batch
+            if fact.dis_ancestors and _is_in_closed_branch(fact.dis_ancestors, closed_branches):
+                continue
+
             key = (fact.name, len(fact.args))
             triggers = trigger_index.get(key, [])
 
@@ -524,7 +546,8 @@ def _match_with_trigger(
         new_before_dicts: List[Substitution] = []
 
         for match, dict_so_far in zip(before_matches, before_dicts):
-            for candidate in pf_envir.facts_by_key.get((premise.name, len(premise.args)), []):
+            candidates = _get_candidates(pf_envir, premise, dict_so_far)
+            for candidate in candidates:
                 new_dict = dict_so_far.copy()
                 if _unify_facts(premise, candidate, new_dict):
                     new_before_matches.append(match + [candidate])
@@ -547,7 +570,8 @@ def _match_with_trigger(
             new_after_dicts: List[Substitution] = []
 
             for match, dict_so_far in zip(after_matches, after_dicts):
-                for candidate in pf_envir.facts_by_key.get((premise.name, len(premise.args)), []):
+                candidates = _get_candidates(pf_envir, premise, dict_so_far)
+                for candidate in candidates:
                     new_dict = dict_so_far.copy()
                     if _unify_facts(premise, candidate, new_dict):
                         new_after_matches.append(match + [candidate])
@@ -563,6 +587,28 @@ def _match_with_trigger(
             complete_matches.append(before_match + [new_fact] + after_match)
 
     return complete_matches
+
+
+def _get_candidates(
+    pf_envir: ProofEnvironment, premise: Fact, substitution: Substitution
+) -> List[Fact]:
+    """Get candidate facts for matching, using value index when possible."""
+    key = (premise.name, len(premise.args))
+    if premise.args:
+        first_arg = premise.args[0]
+        # If the first arg is a variable already bound in the substitution, use value index
+        if isinstance(first_arg, str) and not first_arg.startswith("*") and first_arg in substitution:
+            val_key = (premise.name, len(premise.args), substitution[first_arg])
+            result = pf_envir.facts_by_key_val.get(val_key)
+            if result is not None:
+                return result
+        # If the first arg is a literal (*-prefixed), use value index
+        elif isinstance(first_arg, str) and first_arg.startswith("*"):
+            val_key = (premise.name, len(premise.args), first_arg[1:])
+            result = pf_envir.facts_by_key_val.get(val_key)
+            if result is not None:
+                return result
+    return pf_envir.facts_by_key.get(key, [])
 
 
 def _substitute_arg(arg: Any, substitution: Substitution) -> Any:

@@ -269,9 +269,10 @@ in_facts = [transitive_action("G", "n"), simple("G")]
 
 def _simple_group_action_rule(facts: List[Fact]) -> List[Fact]:
     conclusions: List[Fact] = []
+    G = facts[0].args[0]
     n = int(facts[0].args[1])
     if n > 1:
-        conclusions = [subgroup("G", "?alt"), alternating_group("?alt", str(n))]
+        conclusions = [subgroup(G, "?alt"), alternating_group("?alt", str(n))]
     return conclusions
 
 
@@ -295,7 +296,7 @@ def _count_order_pk_elements_rule(facts: List[Fact]) -> List[Fact]:
         if n_p == 1:
             lower_bound = pk - 1
         else:
-            lower_bound = pk
+            lower_bound = n_p * (pk - pk // p)
     conclusions = [order_pk_lower_bound(G, str(p), str(lower_bound))]
     return conclusions
 
@@ -330,6 +331,34 @@ def _counting_contradiction_rule(facts: List[Fact]) -> List[Fact]:
 
 counting_contradiction = HyperTheorem(
     in_facts, _counting_contradiction_rule, "counting_contradiction"
+)
+
+# 3-way counting contradiction
+in_facts = [
+    order_pk_lower_bound("G", "p1", "N1"),
+    order_pk_lower_bound("G", "p2", "N2"),
+    order_pk_lower_bound("G", "p3", "N3"),
+    order("G", "n"),
+]
+
+
+def _counting_contradiction_3way_rule(facts: List[Fact]) -> List[Fact]:
+    p1 = int(facts[0].args[1])
+    p2 = int(facts[1].args[1])
+    p3 = int(facts[2].args[1])
+    if len({p1, p2, p3}) != 3:
+        return []
+    N1 = int(facts[0].args[2])
+    N2 = int(facts[1].args[2])
+    N3 = int(facts[2].args[2])
+    n = int(facts[3].args[1])
+    if N1 + N2 + N3 + 1 > n:
+        return [false()]
+    return []
+
+
+counting_contradiction_3way = HyperTheorem(
+    in_facts, _counting_contradiction_3way_rule, "counting_contradiction_3way"
 )
 
 ########################### NORMALIZER OF INTERSECTION #########################
@@ -489,13 +518,12 @@ rule_out_normalizer_of_intersection_order = HyperTheorem(
 )
 
 
-DEFAULT_THEOREMS: List[Union[Theorem, HyperTheorem]] = [
+FAST_THEOREMS: List[Union[Theorem, HyperTheorem]] = [
     # --- Closing theorems (produce false()) - checked first to close branches early ---
     simple_not_simple,
     divides_contradiction,
     counting_contradiction,
-    rule_out_max_intersections,
-    rule_out_normalizer_of_intersection_order,
+    counting_contradiction_3way,
     # --- Structural theorems (transform/derive key facts) ---
     single_sylow_not_simple,
     normal_subgroup_to_not_simple,
@@ -510,11 +538,21 @@ DEFAULT_THEOREMS: List[Union[Theorem, HyperTheorem]] = [
     simple_group_action,
     count_order_pk_elements,
     multiple_sylows,
+]
+
+DEFAULT_THEOREMS: List[Union[Theorem, HyperTheorem]] = FAST_THEOREMS + [
+    # --- Normalizer machinery (expensive, only needed for hard cases) ---
+    rule_out_max_intersections,
+    rule_out_normalizer_of_intersection_order,
     possible_max_intersections,
     intersection_of_sylows,
     normalizer_sylow_intersection,
     normalizer_everything_implies_normal,
 ]
+
+FAST_THEOREM_DICT: Dict[str, Union[Theorem, HyperTheorem]] = {
+    t.name: t for t in FAST_THEOREMS
+}
 
 DEFAULT_THEOREM_DICT: Dict[str, Union[Theorem, HyperTheorem]] = {
     "sylow": sylow_theorem,
@@ -530,6 +568,7 @@ DEFAULT_THEOREM_DICT: Dict[str, Union[Theorem, HyperTheorem]] = {
     "simple_group_action": simple_group_action,
     "count_order_pk_elements": count_order_pk_elements,
     "counting_cont": counting_contradiction,
+    "counting_contradiction_3way": counting_contradiction_3way,
     "multiple_sylows": multiple_sylows,
     "possible_max_intersections": possible_max_intersections,
     "intersection_of_sylows": intersection_of_sylows,

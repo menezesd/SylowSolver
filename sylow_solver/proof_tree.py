@@ -406,6 +406,7 @@ def _pretty_theorem_name(name: str) -> str:
         "single_sylow_normal": "unique Sylow subgroup is normal",
         "not_simple": "simple ∧ not_simple → ⊥",
         "counting_contradiction": "element counting",
+        "counting_contradiction_3way": "3-way element counting",
         "alternating_order": "order of alternating group",
         "alternating_simple": "Aₙ is simple (n≥5)",
         "lagrange": "Lagrange's theorem",

@@ -5,6 +5,8 @@ from .theorem_base import HyperTheorem, Theorem
 from .theorems import (
     DEFAULT_THEOREM_DICT,
     DEFAULT_THEOREMS,
+    FAST_THEOREM_DICT,
+    FAST_THEOREMS,
     alternating_group,
     false,
     group,
@@ -34,6 +36,8 @@ __all__ = [
     "Theorem",
     "DEFAULT_THEOREMS",
     "DEFAULT_THEOREM_DICT",
+    "FAST_THEOREMS",
+    "FAST_THEOREM_DICT",
     "alternating_group",
     "false",
     "group",

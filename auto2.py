@@ -13,6 +13,8 @@ from sylow_solver.search import ProofEnvironment, auto_solve
 from sylow_solver.theorems import (
     DEFAULT_THEOREM_DICT,
     DEFAULT_THEOREMS,
+    FAST_THEOREM_DICT,
+    FAST_THEOREMS,
     false,
     group,
     order,
@@ -21,14 +23,19 @@ from sylow_solver.theorems import (
 
 
 def build_environment(
-    order_value: int, config: SolverConfig, logger: logging.Logger
+    order_value: int,
+    config: SolverConfig,
+    logger: logging.Logger,
+    use_normalizer: bool = True,
 ) -> ProofEnvironment:
     """Create a proof environment for a group of given order."""
     facts: List[Fact] = [group("G"), simple("G"), order("G", str(order_value))]
+    theorems = DEFAULT_THEOREMS if use_normalizer else FAST_THEOREMS
+    theorem_dict = DEFAULT_THEOREM_DICT if use_normalizer else FAST_THEOREM_DICT
     return ProofEnvironment(
         list(facts),
-        DEFAULT_THEOREMS,
-        DEFAULT_THEOREM_DICT,
+        theorems,
+        theorem_dict,
         false(),
         config=config,
         logger=logger,
@@ -47,7 +54,11 @@ def _parse_positive_order(raw: str) -> int | None:
 
 
 def solve_orders(orders: Iterable[str], config: SolverConfig, logger: logging.Logger) -> List[bool]:
-    """Run the solver for each provided order and return success flags."""
+    """Run the solver for each provided order and return success flags.
+
+    Uses staged solving: first tries fast theorems (no normalizer machinery),
+    then falls back to the full theorem set if needed.
+    """
     results: List[bool] = []
     processed = 0
     invalid = 0
@@ -60,9 +71,23 @@ def solve_orders(orders: Iterable[str], config: SolverConfig, logger: logging.Lo
             continue
 
         processed += 1
-        env = build_environment(order_value, config, logger)
-        logger.info("Starting proof search for |G| = %s", order_value)
+        # Stage 1: try fast theorems (counting + alternating embedding)
+        fast_config = SolverConfig(
+            max_iterations=config.max_iterations,
+            batch_size=config.batch_size,
+            verbose=config.verbose,
+            output_mode=config.output_mode,
+        )
+        env = build_environment(order_value, fast_config, logger, use_normalizer=False)
+        logger.info("Starting fast proof search for |G| = %s", order_value)
         success = auto_solve(env)
+
+        if not success:
+            # Stage 2: try full theorem set including normalizer
+            logger.info("Fast search failed, trying normalizer for |G| = %s", order_value)
+            env = build_environment(order_value, config, logger, use_normalizer=True)
+            success = auto_solve(env)
+
         results.append(success)
         status = "SUCCESS" if success else "FAILURE"
         print(f"order {order_value}: {status}")

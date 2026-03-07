@@ -1,6 +1,10 @@
+import pytest
+
 from sylow_solver import (
     DEFAULT_THEOREM_DICT,
     DEFAULT_THEOREMS,
+    FAST_THEOREM_DICT,
+    FAST_THEOREMS,
     Disjunction,
     Fact,
     ProofEnvironment,
@@ -8,7 +12,8 @@ from sylow_solver import (
     auto_solve,
     match_facts_to_theorem,
 )
-from sylow_solver.config import SolverConfig
+from sylow_solver.config import OutputMode, SolverConfig
+from sylow_solver.number_theory import is_prime, prime_factorization
 from sylow_solver.theorems import (
     false,
     group,
@@ -246,3 +251,44 @@ def test_order_60_does_not_force_contradiction_regression():
     assert not auto_solve(pf_envir), (
         "Order 60 has a simple example (A5), so solver must not force contradiction"
     )
+
+
+def _is_prime_power(n: int) -> bool:
+    """Check if n is p^k for some prime p and k >= 1."""
+    facts = prime_factorization(n)
+    return len(facts) == 1
+
+
+def _should_be_provable(n: int) -> bool:
+    """An order should be provable if it's composite and not 60 (A5)."""
+    if n <= 1 or is_prime(n):
+        return False
+    if n == 60:
+        return False
+    return True
+
+
+# Known hard orders that the Haskell/Scheme solvers also struggle with
+KNOWN_HARD = {168, 210, 240, 264, 288, 315, 336, 360, 396, 420, 432, 480}
+
+
+@pytest.mark.parametrize("n", range(2, 201))
+def test_range_2_to_200(n):
+    """Test that the solver handles orders 2-200."""
+    if is_prime(n) or _is_prime_power(n):
+        return  # primes and prime powers need different arguments
+    if n == 60:
+        return  # A5 is simple
+    if n in KNOWN_HARD:
+        pytest.skip(f"Order {n} is a known hard case")
+
+    config = SolverConfig(
+        max_iterations=500, batch_size=16, verbose=False, output_mode=OutputMode.CLEAN
+    )
+    facts = [group("G"), simple("G"), order("G", str(n))]
+    goal = false()
+    pf_envir = ProofEnvironment(
+        facts, FAST_THEOREMS, FAST_THEOREM_DICT, goal, config=config
+    )
+    result = auto_solve(pf_envir)
+    assert result, f"Failed to prove order {n} is not simple"
